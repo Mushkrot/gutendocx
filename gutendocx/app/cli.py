@@ -18,7 +18,7 @@ def cmd_all(args):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(prog="wordkit")
+    parser = argparse.ArgumentParser(prog="gutendocx")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p1 = sub.add_parser("prescan")
