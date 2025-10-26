@@ -77,12 +77,12 @@ def _is_decorative_line(s: str) -> bool:
 def _has_page_or_section_break(p) -> bool:
     el = p._element
     try:
-        ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-        if el.xpath('.//w:br[@w:type="page"]', namespaces=ns):
+        # python-docx OxmlElement.xpath doesn't accept namespaces kwarg; ns prefixes are predefined
+        if el.xpath('.//w:br[@w:type="page"]'):
             return True
-        if el.xpath('.//w:lastRenderedPageBreak', namespaces=ns):
+        if el.xpath('.//w:lastRenderedPageBreak'):
             return True
-        if el.xpath('./w:pPr/w:sectPr', namespaces=ns):
+        if el.xpath('./w:pPr/w:sectPr'):
             return True
     except Exception:
         return False
@@ -158,13 +158,16 @@ def detect_cover_roles(doc: Document, config: Dict[str, Any]) -> Dict[str, Any]:
     delta = float(detect_cfg.get("size_delta_pct", 10))
 
     cover_paras = []
+    found_break = False
     for p in doc.paragraphs:
         if _has_page_or_section_break(p):
+            cover_paras.append(p)  # include the paragraph that contains the break
+            found_break = True
             break
         cover_paras.append(p)
 
     warnings: List[str] = []
-    if not cover_paras:
+    if not cover_paras or not found_break:
         warnings.append("no_page_break_found_or_empty_cover")
         return {
             "cover_paragraph_indices": [],
@@ -218,22 +221,42 @@ def detect_cover_roles(doc: Document, config: Dict[str, Any]) -> Dict[str, Any]:
             return True
         return False
 
-    i = last_idx + 1
-    while i < len(cover_paras):
-        p = cover_paras[i]
-        if not _is_empty_para(p):
-            if is_author_para(p):
-                role_map[i] = "Cover Author"
-                # attach year on same line or next line
-                t_self = _norm_text(p.text)
-                if t_self and year_rx.search(t_self):
-                    pass
-                elif i + 1 < len(cover_paras):
-                    t_next = _norm_text(cover_paras[i + 1].text)
-                    if t_next and year_rx.search(t_next):
-                        role_map[i + 1] = "Cover Author"
-                break
-        i += 1
+    # Find best author line anywhere on the cover (not only after title/subtitle)
+    best_idx = None
+    best_score = -1
+    for idx in cand_idxs:
+        p = cover_paras[idx]
+        t_uc = _uc(_norm_text(p.text))
+        if not t_uc:
+            continue
+        score = 0
+        if any(m in t_uc for m in author_markers):
+            score += 2
+        if bool(re.match(r"^[A-Z .,'\-]+$", t_uc)) and len(t_uc) <= 60:
+            score += 1
+        # Prefer smaller-than-title sizes slightly
+        try:
+            sz = _para_max_font_size_pt(p)
+            if title_idxs:
+                max_title_sz = max(_para_max_font_size_pt(cover_paras[i]) for i in title_idxs)
+                if sz < max_title_sz:
+                    score += 1
+        except Exception:
+            pass
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+
+    if best_idx is not None and best_score >= 1:
+        role_map[best_idx] = "Cover Author"
+        # attach year on same line or next line
+        t_self = _norm_text(cover_paras[best_idx].text)
+        if t_self and year_rx.search(t_self):
+            pass
+        elif best_idx + 1 < len(cover_paras):
+            t_next = _norm_text(cover_paras[best_idx + 1].text)
+            if t_next and year_rx.search(t_next):
+                role_map[best_idx + 1] = "Cover Author"
 
     # small refinement: if title lines are not centered and subtitle lines are centered, prefer centered ones for title/subtitle roles
     if prefer_center:
