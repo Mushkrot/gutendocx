@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List, Tuple
+import os
+import re
+
+from docx import Document
+from docx.enum.style import WD_STYLE_TYPE
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+from .loader import Loader
+from .layout import apply_sections_and_numbering
+
+
+def _pt(val) -> float:
+    try:
+        return float(getattr(val, "pt", 0.0) or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _para_max_font_size_pt(p) -> float:
+    max_pt = 0.0
+    for r in p.runs:
+        sz = _pt(getattr(r.font, "size", None))
+        if sz > max_pt:
+            max_pt = sz
+    return max_pt
+
+
+def _norm_text(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip())
+
+
+def _is_empty_para(p) -> bool:
+    return _norm_text(p.text) == ""
+
+
+def _uc(s: str) -> str:
+    return (s or "").upper()
+
+
+def _ensure_paragraph_style(doc: Document, style_name: str, font_cfg: Dict[str, Any]):
+    styles = doc.styles
+    try:
+        style = styles[style_name]
+    except KeyError:
+        style = styles.add_style(style_name, WD_STYLE_TYPE.PARAGRAPH)
+    if font_cfg:
+        st_font = style.font
+        fam = font_cfg.get("family")
+        if fam:
+            st_font.name = fam
+        sz = font_cfg.get("size_pt")
+        if sz:
+            from docx.shared import Pt
+
+            st_font.size = Pt(float(sz))
+        if font_cfg.get("bold") is not None:
+            st_font.bold = bool(font_cfg.get("bold"))
+        if font_cfg.get("all_caps") is not None:
+            st_font.all_caps = bool(font_cfg.get("all_caps"))
+        if font_cfg.get("small_caps") is not None:
+            st_font.small_caps = bool(font_cfg.get("small_caps"))
+        align = font_cfg.get("align")
+        if align == "center":
+            style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        elif align == "right":
+            style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        elif align == "left":
+            style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    return style
+
+
+def _cluster_by_size(paras: List, delta_pct: float) -> List[List[int]]:
+    if not paras:
+        return []
+    sizes = [_para_max_font_size_pt(p) for p in paras]
+    clusters: List[List[int]] = []
+    current: List[int] = []
+
+    def similar(a: float, b: float) -> bool:
+        if a == 0 or b == 0:
+            return a == b
+        return abs(a - b) <= max(a, b) * (delta_pct / 100.0)
+
+    for i, sz in enumerate(sizes):
+        if not current:
+            current = [i]
+        else:
+            prev_sz = sizes[current[-1]]
+            if similar(prev_sz, sz):
+                current.append(i)
+            else:
+                clusters.append(current)
+                current = [i]
+    if current:
+        clusters.append(current)
+    clusters.sort(key=lambda idxs: sum(sizes[i] for i in idxs) / max(len(idxs), 1), reverse=True)
+    return clusters
+
+
+def detect_cover_roles(doc: Document, config: Dict[str, Any]) -> Dict[str, Any]:
+    cfg = config.get("cover", {})
+    detect_cfg = cfg.get("detect", {})
+    author_markers = [_uc(x) for x in detect_cfg.get("author_markers", [])]
+    year_rx = re.compile(detect_cfg.get("year_regex", r"\b(1[5-9]\d{2}|20\d{2}|21\d{2})\b"))
+    max_non_empty = int(detect_cfg.get("max_non_empty", 25))
+    delta = float(detect_cfg.get("size_delta_pct", 10))
+
+    cover_paras = []
+    for p in doc.paragraphs:
+        if not _is_empty_para(p):
+            cover_paras.append(p)
+            if len(cover_paras) >= max_non_empty:
+                break
+        else:
+            cover_paras.append(p)
+            if len(cover_paras) >= max_non_empty:
+                break
+
+    cand_idxs = [i for i, p in enumerate(cover_paras) if not _is_empty_para(p)]
+    cands = [cover_paras[i] for i in cand_idxs]
+
+    clusters = _cluster_by_size(cands, delta)
+    role_map: Dict[int, str] = {}
+
+    if clusters:
+        for idx in clusters[0]:
+            role_map[cand_idxs[idx]] = "Cover Title"
+
+    if len(clusters) > 1:
+        for idx in clusters[1]:
+            role_map[cand_idxs[idx]] = "Cover Subtitle"
+
+    last_idx = max(role_map.keys(), default=-1)
+
+    def is_author_para(p) -> bool:
+        t = _uc(_norm_text(p.text))
+        if any(t.startswith(m) for m in author_markers):
+            return True
+        if bool(re.match(r"^[A-Z .,'\-]+$", t)) and len(t) <= 60:
+            return True
+        return False
+
+    i = last_idx + 1
+    while i < len(cover_paras):
+        p = cover_paras[i]
+        if not _is_empty_para(p):
+            if is_author_para(p):
+                role_map[i] = "Cover Author"
+                if i + 1 < len(cover_paras):
+                    t_next = _norm_text(cover_paras[i + 1].text)
+                    if t_next and year_rx.search(t_next):
+                        role_map[i + 1] = "Cover Author"
+                break
+        i += 1
+
+    return {
+        "cover_paragraph_indices": list(range(len(cover_paras))),
+        "assignments": {int(k): v for k, v in role_map.items()},
+    }
+
+
+def apply_cover_styles(doc: Document, detection: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    cover_cfg = config.get("cover", {})
+    styles_cfg = cover_cfg.get("styles", {})
+    norm_cfg = cover_cfg.get("normalize", {})
+
+    title_style = _ensure_paragraph_style(doc, styles_cfg.get("title", {}).get("name", "Cover Title"), styles_cfg.get("title", {}).get("font", {}))
+    subtitle_style = _ensure_paragraph_style(doc, styles_cfg.get("subtitle", {}).get("name", "Cover Subtitle"), styles_cfg.get("subtitle", {}).get("font", {}))
+    author_style = _ensure_paragraph_style(doc, styles_cfg.get("author", {}).get("name", "Cover Author"), styles_cfg.get("author", {}).get("font", {}))
+
+    assignments: Dict[int, str] = {int(k): v for k, v in detection.get("assignments", {}).items()}
+    cover_idxs: List[int] = detection.get("cover_paragraph_indices", [])
+
+    changed: List[Tuple[int, str]] = []
+    for i in cover_idxs:
+        p = doc.paragraphs[i]
+        role = assignments.get(i)
+        if role == "Cover Title":
+            p.style = title_style
+        elif role == "Cover Subtitle":
+            p.style = subtitle_style
+        elif role == "Cover Author":
+            p.style = author_style
+        else:
+            if norm_cfg.get("collapse_misc_to_normal", True):
+                p.style = doc.styles["Normal"]
+        if role:
+            changed.append((i, role))
+
+    return {"changed": changed}
+
+
+def _ensure_output_path(out_dir: str, input_path: str, versioning: bool = True) -> str:
+    base = os.path.splitext(os.path.basename(input_path))[0]
+    candidate = os.path.join(out_dir, f"{base}.docx")
+    if not versioning:
+        return candidate
+    if not os.path.exists(candidate):
+        return candidate
+    i = 1
+    while True:
+        suffix = f"_v_{i:02d}"
+        cand = os.path.join(out_dir, f"{base}{suffix}.docx")
+        if not os.path.exists(cand):
+            return cand
+        i += 1
+
+
+def run_cover_pipeline(input_path: str, config: Dict[str, Any], out_dir: str, dry_run: bool = False) -> Dict[str, Any]:
+    loader = Loader()
+    doc = loader.open(input_path)
+
+    detection = detect_cover_roles(doc, config)
+    applied = apply_cover_styles(doc, detection, config)
+
+    cover_idxs = detection.get("cover_paragraph_indices", [])
+    last_cover_idx = max(cover_idxs) if cover_idxs else 0
+    first_body_idx = min(last_cover_idx + 1, len(doc.paragraphs) - 1)
+
+    apply_sections_and_numbering(doc, config, last_cover_idx, first_body_idx)
+
+    os.makedirs(out_dir, exist_ok=True)
+    out_cfg = (config or {}).get("output", {})
+    versioning = bool(out_cfg.get("versioning", True))
+    out_path = _ensure_output_path(out_dir, input_path, versioning=versioning)
+
+    saved_path = None
+    if not dry_run:
+        saved_path = loader.save(doc, out_path)
+
+    return {
+        "detection": detection,
+        "applied": applied,
+        "output_path": saved_path or out_path,
+        "dry_run": dry_run,
+    }

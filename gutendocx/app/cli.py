@@ -4,6 +4,8 @@ import os
 import sys
 
 from ..core.scan import prescan as scan_prescan
+from ..core.config import load_config
+from ..core.cover import run_cover_pipeline
 
 
 def cmd_prescan(args):
@@ -44,6 +46,25 @@ def cmd_all(args):
     print("all: not implemented yet")
 
 
+def cmd_cover(args):
+    try:
+        cfg = getattr(args, "config_obj", {}) or {}
+        out_dir = args.out_dir or ((cfg.get("output", {}) or {}).get("dir") or "output")
+        res = run_cover_pipeline(args.input, cfg, out_dir=out_dir, dry_run=bool(args.dry_run))
+        if args.report:
+            rep_dir = os.path.dirname(os.path.abspath(args.report))
+            if rep_dir:
+                os.makedirs(rep_dir, exist_ok=True)
+            with open(args.report, "w", encoding="utf-8") as f:
+                json.dump(res, f, ensure_ascii=False, indent=2)
+        print(f"output: {res.get('output_path')}")
+        if args.report:
+            print(f"report: {args.report}")
+    except Exception as e:
+        print(f"cover failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="gutendocx")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -51,6 +72,7 @@ def build_parser():
     p1 = sub.add_parser("prescan")
     p1.add_argument("input")
     p1.add_argument("--out")
+    p1.add_argument("--config", required=False)
     p1.set_defaults(func=cmd_prescan)
 
     p2 = sub.add_parser("apply-styles")
@@ -73,15 +95,29 @@ def build_parser():
     p4.add_argument("--config", required=False)
     p4.set_defaults(func=cmd_all)
 
+    p5 = sub.add_parser("cover")
+    p5.add_argument("input")
+    p5.add_argument("--out-dir", required=False)
+    p5.add_argument("--dry-run", action="store_true")
+    p5.add_argument("--report", required=False)
+    p5.add_argument("--config", required=False)
+    p5.set_defaults(func=cmd_cover)
+
     return parser
 
 
-essentials = ["prescan", "apply-styles", "layout", "all"]
+essentials = ["prescan", "apply-styles", "layout", "all", "cover"]
 
 
 def main():
     parser = build_parser()
     args = parser.parse_args()
+    try:
+        cfg = load_config(getattr(args, "config", None))
+    except Exception as e:
+        print(f"config load failed: {e}", file=sys.stderr)
+        sys.exit(1)
+    setattr(args, "config_obj", cfg)
     args.func(args)
 
 
