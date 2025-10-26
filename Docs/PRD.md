@@ -146,11 +146,11 @@ Implement via OpenXML only:
 - Support **per‑project override** by allowing a local `config.yaml` in the working directory.
 
 ### 4.10 CLI (MVP)
-- `wordkit prescan <input.docx> --out report.json`  
-- `wordkit apply-styles <input.docx> --config config.yaml --out out.docx [--remap yes] [--normalize yes]`  
-- `wordkit layout <input.docx> --config config.yaml --out out.docx`  
-- `wordkit all <input.docx> --config config.yaml --out out.docx`  
-- Batch mode: `--input-dir`, `--glob`, `--out-dir`.
+- `gutendocx prescan <input.docx> --out report.json`  
+- `gutendocx apply-styles <input.docx> --config config.yaml --out out.docx [--remap yes] [--normalize yes]`  
+- `gutendocx layout <input.docx> --config config.yaml --out out.docx`  
+- `gutendocx all <input.docx> --config config.yaml --out out.docx`  
+ Batch mode: `--input-dir`, `--glob`, `--out-dir`.
 
 ### 4.11 GUI (Phase 2, optional)
 - Simple Windows UI (PySide6) to:  
@@ -314,7 +314,7 @@ options:
 ### 6.5 Folder Structure
 
 ```
-wordkit/
+gutendocx/
   core/
     loader.py
     scan.py
@@ -443,7 +443,7 @@ README.md
 
 ## 14) Acceptance Criteria (MVP)
 
-- Given an input DOCX, running `wordkit all` with defaults produces an output DOCX where:  
+- Given an input DOCX, running `gutendocx all` with defaults produces an output DOCX where:  
   - Page 1 has only Title/Subtitle/Author (as mapped), no page number.  
   - Page 2 is blank and shows page number “2” (if configured to show).  
   - Page 3+ contains the rest of the document, numbering continues from “3”.  
@@ -456,19 +456,19 @@ README.md
 
 ```bash
 # Pre-scan a single file
-wordkit prescan input/pg69904.docx --out reports/pg69904.json
+gutendocx prescan input/pg69904.docx --out reports/pg69904.json
 
 # Apply style overrides and remap styles according to config
-wordkit apply-styles input/pg69904.docx --config configs/project.yaml --out out/pg69904.styled.docx --remap yes --normalize yes
+gutendocx apply-styles input/pg69904.docx --config configs/project.yaml --out out/pg69904.styled.docx --remap yes --normalize yes
 
 # Apply layout (sections + numbering from page 2)
-wordkit layout out/pg69904.styled.docx --config configs/project.yaml --out out/pg69904.final.docx
+gutendocx layout out/pg69904.styled.docx --config configs/project.yaml --out out/pg69904.final.docx
 
 # Apply styles and layout to all DOCX files in a folder
-wordkit all --input-dir input/books --config configs/project.yaml --out-dir out/books
+gutendocx all --input-dir input/books --config configs/project.yaml --out-dir out/books
 
 # Full pipeline for a single file
-wordkit all input/pg69789.docx --config configs/project.yaml --out out/pg69789.final.docx
+gutendocx all input/pg69789.docx --config configs/project.yaml --out out/pg69789.final.docx
 ```
 
 **Config snippet (`configs/project.yaml`):**

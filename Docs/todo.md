@@ -137,7 +137,7 @@ _This list is derived from the PRD “Word Style Normalizer & Layout Engine (Win
 ## 8) Testing & QA — `TEST`
 
 - [ ] **TEST-1** Unit tests per module (scan/styles/sections/etc.). **Dependencies:** CORE modules. **AI:** medium
-- [ ] **TEST-2** Integration tests: `wordkit all` over fixtures. **Dependencies:** APP-CLI. **AI:** medium
+- [ ] **TEST-2** Integration tests: `gutendocx all` over fixtures. **Dependencies:** APP-CLI. **AI:** medium
 - [ ] **TEST-3** Snapshot XML tests (document, styles, headers/footers). **Dependencies:** CORE-STY/SECT. **AI:** medium
 - [ ] **TEST-4** Visual checks plan for Mac/Windows (manual checklist). **Dependencies:** LAY-1..4. **AI:** easy
 - [ ] **TEST-5** Performance assertions (time upper bounds). **Dependencies:** NFR-1/2. **AI:** easy

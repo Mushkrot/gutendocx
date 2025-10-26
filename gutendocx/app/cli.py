@@ -1,8 +1,35 @@
 import argparse
+import json
+import os
+import sys
+
+from ..core.scan import prescan as scan_prescan
 
 
 def cmd_prescan(args):
-    print("prescan: not implemented yet")
+    try:
+        inv = scan_prescan(args.input)
+        if args.out:
+            out_dir = os.path.dirname(os.path.abspath(args.out))
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+            with open(args.out, "w", encoding="utf-8") as f:
+                json.dump(inv, f, ensure_ascii=False, indent=2)
+        summary = inv.get("summary", {})
+        p_styles = inv.get("paragraph", {})
+        c_styles = inv.get("character", {})
+        t_styles = inv.get("table", {})
+        print(
+            f"paragraphs={summary.get('paragraph_total', 0)} runs={summary.get('run_total', 0)} tables={summary.get('table_total', 0)}"
+        )
+        print(
+            f"styles: paragraph={len(p_styles)} character={len(c_styles)} table={len(t_styles)}"
+        )
+        if args.out:
+            print(f"report written: {args.out}")
+    except Exception as e:
+        print(f"prescan failed: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_apply_styles(args):
@@ -23,6 +50,7 @@ def build_parser():
 
     p1 = sub.add_parser("prescan")
     p1.add_argument("input")
+    p1.add_argument("--out")
     p1.set_defaults(func=cmd_prescan)
 
     p2 = sub.add_parser("apply-styles")
