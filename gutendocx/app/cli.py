@@ -50,7 +50,13 @@ def cmd_cover(args):
     try:
         cfg = getattr(args, "config_obj", {}) or {}
         out_dir = args.out_dir or ((cfg.get("output", {}) or {}).get("dir") or "output")
-        res = run_cover_pipeline(args.input, cfg, out_dir=out_dir, dry_run=bool(args.dry_run))
+        res = run_cover_pipeline(
+            args.input,
+            cfg,
+            out_dir=out_dir,
+            dry_run=bool(args.dry_run),
+            no_layout=bool(args.no_layout),
+        )
         if args.report:
             rep_dir = os.path.dirname(os.path.abspath(args.report))
             if rep_dir:
@@ -99,6 +105,7 @@ def build_parser():
     p5.add_argument("input")
     p5.add_argument("--out-dir", required=False)
     p5.add_argument("--dry-run", action="store_true")
+    p5.add_argument("--no-layout", action="store_true")
     p5.add_argument("--report", required=False)
     p5.add_argument("--config", required=False)
     p5.set_defaults(func=cmd_cover)

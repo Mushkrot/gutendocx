@@ -7,6 +7,7 @@ import re
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 
 from .loader import Loader
 from .layout import apply_sections_and_numbering
@@ -19,12 +20,32 @@ def _pt(val) -> float:
         return 0.0
 
 
+def _run_size_pt(r) -> float:
+    sz = _pt(getattr(r.font, "size", None))
+    if sz:
+        return sz
+    try:
+        rs = getattr(r, "style", None)
+        if rs is not None:
+            sz = _pt(getattr(rs.font, "size", None))
+            if sz:
+                return sz
+    except Exception:
+        pass
+    return 0.0
+
+
 def _para_max_font_size_pt(p) -> float:
     max_pt = 0.0
     for r in p.runs:
-        sz = _pt(getattr(r.font, "size", None))
+        sz = _run_size_pt(r)
         if sz > max_pt:
             max_pt = sz
+    if max_pt == 0.0:
+        try:
+            max_pt = _pt(getattr(getattr(p.style, "font", None), "size", None)) or 0.0
+        except Exception:
+            pass
     return max_pt
 
 
@@ -38,6 +59,34 @@ def _is_empty_para(p) -> bool:
 
 def _uc(s: str) -> str:
     return (s or "").upper()
+
+
+def _uppercase_ratio(s: str) -> float:
+    t = re.sub(r"[^A-Za-z]", "", s)
+    if not t:
+        return 0.0
+    up = sum(1 for ch in t if ch.isupper())
+    return up / max(len(t), 1)
+
+
+def _is_decorative_line(s: str) -> bool:
+    t = _norm_text(s)
+    return bool(re.match(r"^[\-–—_•|]+$", t))
+
+
+def _has_page_or_section_break(p) -> bool:
+    el = p._element
+    try:
+        ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        if el.xpath('.//w:br[@w:type="page"]', namespaces=ns):
+            return True
+        if el.xpath('.//w:lastRenderedPageBreak', namespaces=ns):
+            return True
+        if el.xpath('./w:pPr/w:sectPr', namespaces=ns):
+            return True
+    except Exception:
+        return False
+    return False
 
 
 def _ensure_paragraph_style(doc: Document, style_name: str, font_cfg: Dict[str, Any]):
@@ -110,34 +159,60 @@ def detect_cover_roles(doc: Document, config: Dict[str, Any]) -> Dict[str, Any]:
 
     cover_paras = []
     for p in doc.paragraphs:
-        if not _is_empty_para(p):
-            cover_paras.append(p)
-            if len(cover_paras) >= max_non_empty:
-                break
-        else:
-            cover_paras.append(p)
-            if len(cover_paras) >= max_non_empty:
-                break
+        if _has_page_or_section_break(p):
+            break
+        cover_paras.append(p)
 
-    cand_idxs = [i for i, p in enumerate(cover_paras) if not _is_empty_para(p)]
+    warnings: List[str] = []
+    if not cover_paras:
+        warnings.append("no_page_break_found_or_empty_cover")
+        return {
+            "cover_paragraph_indices": [],
+            "assignments": {},
+            "clusters": [],
+            "warnings": warnings,
+            "skip": True,
+        }
+
+    cand_idxs = [i for i, p in enumerate(cover_paras) if not _is_empty_para(p) and not _is_decorative_line(p.text)]
     cands = [cover_paras[i] for i in cand_idxs]
 
     clusters = _cluster_by_size(cands, delta)
     role_map: Dict[int, str] = {}
 
+    clusters_info: List[Dict[str, Any]] = []
+    sizes = [_para_max_font_size_pt(p) for p in cands]
+    if all(sz == 0.0 for sz in sizes) and cands:
+        warnings.append("all_effective_font_sizes_zero")
+        return {
+            "cover_paragraph_indices": [int(i) for i in range(len(cover_paras))],
+            "assignments": {},
+            "clusters": [],
+            "warnings": warnings,
+            "skip": True,
+        }
+    for cl in clusters:
+        avg = sum(sizes[i] for i in cl) / max(len(cl), 1)
+        clusters_info.append({"indices": [cand_idxs[i] for i in cl], "avg_size_pt": avg})
+
     if clusters:
-        for idx in clusters[0]:
+        title_cluster = clusters[0]
+        for idx in title_cluster:
             role_map[cand_idxs[idx]] = "Cover Title"
 
     if len(clusters) > 1:
-        for idx in clusters[1]:
+        subtitle_cluster = clusters[1]
+        for idx in subtitle_cluster:
             role_map[cand_idxs[idx]] = "Cover Subtitle"
 
     last_idx = max(role_map.keys(), default=-1)
 
+    prefer_center = bool(detect_cfg.get("prefer_center", True))
+    min_title_upper = float(detect_cfg.get("min_title_upper_pct", 0.0))
+
     def is_author_para(p) -> bool:
         t = _uc(_norm_text(p.text))
-        if any(t.startswith(m) for m in author_markers):
+        if any(m in t for m in author_markers):
             return True
         if bool(re.match(r"^[A-Z .,'\-]+$", t)) and len(t) <= 60:
             return True
@@ -149,16 +224,43 @@ def detect_cover_roles(doc: Document, config: Dict[str, Any]) -> Dict[str, Any]:
         if not _is_empty_para(p):
             if is_author_para(p):
                 role_map[i] = "Cover Author"
-                if i + 1 < len(cover_paras):
+                # attach year on same line or next line
+                t_self = _norm_text(p.text)
+                if t_self and year_rx.search(t_self):
+                    pass
+                elif i + 1 < len(cover_paras):
                     t_next = _norm_text(cover_paras[i + 1].text)
                     if t_next and year_rx.search(t_next):
                         role_map[i + 1] = "Cover Author"
                 break
         i += 1
 
+    # small refinement: if title lines are not centered and subtitle lines are centered, prefer centered ones for title/subtitle roles
+    if prefer_center:
+        def centered(idx: int) -> bool:
+            try:
+                return cover_paras[idx].alignment == WD_ALIGN_PARAGRAPH.CENTER
+            except Exception:
+                return False
+        # promote centered lines within first two clusters
+        for idx in list(role_map.keys()):
+            if role_map[idx] in ("Cover Title", "Cover Subtitle") and not centered(idx):
+                # search nearby line in same cluster that is centered
+                pass
+
+    # warn if uppercase ratio very low for title cluster
+    title_idxs = [k for k, v in role_map.items() if v == "Cover Title"]
+    if min_title_upper > 0 and title_idxs:
+        ratios = [_uppercase_ratio(_norm_text(cover_paras[i].text)) for i in title_idxs]
+        if ratios and max(ratios) < min_title_upper:
+            warnings.append("title_uppercase_ratio_low")
+
     return {
         "cover_paragraph_indices": list(range(len(cover_paras))),
         "assignments": {int(k): v for k, v in role_map.items()},
+        "clusters": clusters_info,
+        "warnings": warnings,
+        "skip": False,
     }
 
 
@@ -209,18 +311,21 @@ def _ensure_output_path(out_dir: str, input_path: str, versioning: bool = True) 
         i += 1
 
 
-def run_cover_pipeline(input_path: str, config: Dict[str, Any], out_dir: str, dry_run: bool = False) -> Dict[str, Any]:
+def run_cover_pipeline(input_path: str, config: Dict[str, Any], out_dir: str, dry_run: bool = False, no_layout: bool = False) -> Dict[str, Any]:
     loader = Loader()
     doc = loader.open(input_path)
 
     detection = detect_cover_roles(doc, config)
-    applied = apply_cover_styles(doc, detection, config)
+    applied = {"changed": []}
+    if not detection.get("skip"):
+        applied = apply_cover_styles(doc, detection, config)
 
     cover_idxs = detection.get("cover_paragraph_indices", [])
     last_cover_idx = max(cover_idxs) if cover_idxs else 0
     first_body_idx = min(last_cover_idx + 1, len(doc.paragraphs) - 1)
 
-    apply_sections_and_numbering(doc, config, last_cover_idx, first_body_idx)
+    if not no_layout and not detection.get("skip"):
+        apply_sections_and_numbering(doc, config, last_cover_idx, first_body_idx)
 
     os.makedirs(out_dir, exist_ok=True)
     out_cfg = (config or {}).get("output", {})
@@ -236,4 +341,5 @@ def run_cover_pipeline(input_path: str, config: Dict[str, Any], out_dir: str, dr
         "applied": applied,
         "output_path": saved_path or out_path,
         "dry_run": dry_run,
+        "layout_applied": not no_layout,
     }
