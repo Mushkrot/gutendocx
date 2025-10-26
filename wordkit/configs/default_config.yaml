@@ -1,0 +1,46 @@
+layout:
+  numbering:
+    start_on_blank_page: 2
+    show_on_blank_page: true
+  headers:
+    show_numpages: false
+
+roles:
+  Title: "Title"
+  Subtitle: "Subtitle"
+  Author: "Author"
+  Body: "Normal"
+  Heading1: "Heading 1"
+  Heading2: "Heading 2"
+  Emphasis: "Emphasis"
+
+style_overrides:
+  Title:
+    font: "Times New Roman"
+    size_pt: 24
+    bold: true
+    align: "center"
+    spacing_after_pt: 12
+  Body:
+    font: "Times New Roman"
+    size_pt: 12
+    align: "justify"
+    line_spacing: 1.15
+
+remap_rules:
+  Body:
+    - "Body Text"
+    - "Text"
+    - "Paragraph"
+  Heading1:
+    - "Chapter"
+    - "Main Heading"
+  Heading2:
+    - "Subhead"
+    - "Subheading"
+  default_fallback: "Body"
+
+options:
+  remap_styles: false
+  normalize_direct_formatting: false
+  backup_originals: false

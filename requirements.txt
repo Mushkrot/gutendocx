@@ -1,0 +1,4 @@
+python-docx==0.8.11
+lxml==4.9.3
+PyYAML==6.0.1
+platformdirs==4.2.0
