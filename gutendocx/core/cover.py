@@ -74,6 +74,20 @@ def _is_decorative_line(s: str) -> bool:
     return bool(re.match(r"^[\-–—_•|]+$", t))
 
 
+def _is_centered(p) -> bool:
+    try:
+        if p.alignment == WD_ALIGN_PARAGRAPH.CENTER:
+            return True
+        st = getattr(p, "style", None)
+        if st is not None:
+            pf = getattr(st, "paragraph_format", None)
+            if pf is not None and pf.alignment == WD_ALIGN_PARAGRAPH.CENTER:
+                return True
+    except Exception:
+        return False
+    return False
+
+
 def _has_page_or_section_break(p) -> bool:
     el = p._element
     try:
@@ -198,16 +212,70 @@ def detect_cover_roles(doc: Document, config: Dict[str, Any]) -> Dict[str, Any]:
         avg = sum(sizes[i] for i in cl) / max(len(cl), 1)
         clusters_info.append({"indices": [cand_idxs[i] for i in cl], "avg_size_pt": avg})
 
-    if clusters:
-        title_cluster = clusters[0]
-        for idx in title_cluster:
-            role_map[cand_idxs[idx]] = "Cover Title"
+    # Multi-line Title grouping: include adjacent lines with size within tolerance of max
+    title_within_pct = float(detect_cfg.get("title_within_pct", 12.0))
+    max_size = max(sizes) if sizes else 0.0
+    # positions in cand list that qualify for title by size
+    title_pos = [pos for pos, sz in enumerate(sizes) if max_size > 0 and sz >= max_size * (1 - title_within_pct / 100.0)]
+    # group contiguous positions
+    title_groups: List[List[int]] = []
+    cur: List[int] = []
+    for pos in title_pos:
+        if not cur or pos == cur[-1] - 1 or pos == cur[-1] + 1:
+            if not cur or pos == cur[-1] + 1:
+                cur.append(pos)
+            elif pos == cur[-1] - 1:
+                # unlikely since title_pos is increasing, but keep safety
+                cur.append(pos)
+        else:
+            title_groups.append(cur)
+            cur = [pos]
+    if cur:
+        title_groups.append(cur)
+    # choose the topmost group (smallest cand index)
+    title_block_abs: List[int] = []
+    if title_groups:
+        title_group = min(title_groups, key=lambda g: cand_idxs[g[0]])
+        for pos in title_group:
+            abs_idx = cand_idxs[pos]
+            role_map[abs_idx] = "Cover Title"
+            title_block_abs.append(abs_idx)
 
-    if len(clusters) > 1:
-        subtitle_cluster = clusters[1]
-        for idx in subtitle_cluster:
-            role_map[cand_idxs[idx]] = "Cover Subtitle"
+    # Extend Title block downward to include adjacent centered/caps lines (safeguarded)
+    if title_block_abs:
+        title_block_abs.sort()
+        max_title_sz = max((_para_max_font_size_pt(cover_paras[i]) for i in title_block_abs), default=0.0)
+        # scan following candidate positions after the last title index
+        last_title_abs = title_block_abs[-1]
+        # find its position in cand_idxs ordering
+        if last_title_abs in cand_idxs:
+            start_pos = cand_idxs.index(last_title_abs) + 1
+            added = 0
+            while start_pos < len(cand_idxs) and added < 3:
+                idx_abs = cand_idxs[start_pos]
+                p = cover_paras[idx_abs]
+                t_uc = _uc(_norm_text(p.text))
+                # stop if author markers/year encountered
+                if any(m in t_uc for m in author_markers) or bool(year_rx.search(t_uc)):
+                    break
+                # consider decorative/empty as gap and continue scanning further
+                if _is_empty_para(p) or _is_decorative_line(p.text):
+                    start_pos += 1
+                    continue
+                sz = _para_max_font_size_pt(p)
+                caps = _uppercase_ratio(t_uc)
+                centered = _is_centered(p)
+                # Relaxed rule: strong ALL-CAPS can join Title even if smaller or not explicitly centered
+                if (centered and (sz >= max_title_sz * 0.6 or caps >= 0.6)) or (caps >= 0.8):
+                    role_map[idx_abs] = "Cover Title"
+                    title_block_abs.append(idx_abs)
+                    added += 1
+                    start_pos += 1
+                    continue
+                break
 
+    # Prepare sets used by later steps
+    title_set = set(k for k, v in role_map.items() if v == "Cover Title")
     last_idx = max(role_map.keys(), default=-1)
 
     prefer_center = bool(detect_cfg.get("prefer_center", True))
@@ -221,24 +289,37 @@ def detect_cover_roles(doc: Document, config: Dict[str, Any]) -> Dict[str, Any]:
             return True
         return False
 
-    # Find best author line anywhere on the cover (not only after title/subtitle)
+    # Find Author after Title block; prefer markers/year; do not override Title/Sub
     best_idx = None
     best_score = -1
-    for idx in cand_idxs:
+    # compute a search start after last title line
+    search_start = 0
+    if title_block_abs:
+        last_t = max(title_block_abs)
+        if last_t in cand_idxs:
+            search_start = cand_idxs.index(last_t) + 1
+    for pos in range(search_start, len(cand_idxs)):
+        idx = cand_idxs[pos]
+        # skip only Title; allow overriding a tentative Subtitle if strong Author evidence
+        if idx in title_set or role_map.get(idx) == "Cover Title":
+            continue
         p = cover_paras[idx]
         t_uc = _uc(_norm_text(p.text))
         if not t_uc:
             continue
         score = 0
         if any(m in t_uc for m in author_markers):
-            score += 2
-        if bool(re.match(r"^[A-Z .,'\-]+$", t_uc)) and len(t_uc) <= 60:
+            score += 3
+        if bool(year_rx.search(t_uc)):
             score += 1
-        # Prefer smaller-than-title sizes slightly
+        # simple name-like pattern (allow ALL CAPS names as fallback)
+        if bool(re.match(r"^[A-Z][A-Za-z .,'\-]+$", t_uc)) and len(t_uc) <= 60:
+            score += 1
+        # Prefer smaller-than-title sizes slightly (best-effort)
         try:
             sz = _para_max_font_size_pt(p)
-            if title_idxs:
-                max_title_sz = max(_para_max_font_size_pt(cover_paras[i]) for i in title_idxs)
+            if title_block_abs:
+                max_title_sz = max(_para_max_font_size_pt(cover_paras[i]) for i in title_block_abs)
                 if sz < max_title_sz:
                     score += 1
         except Exception:
@@ -247,7 +328,7 @@ def detect_cover_roles(doc: Document, config: Dict[str, Any]) -> Dict[str, Any]:
             best_score = score
             best_idx = idx
 
-    if best_idx is not None and best_score >= 1:
+    if best_idx is not None and best_score >= 2:  # require stronger evidence (marker/year/name+smaller)
         role_map[best_idx] = "Cover Author"
         # attach year on same line or next line
         t_self = _norm_text(cover_paras[best_idx].text)
@@ -257,6 +338,37 @@ def detect_cover_roles(doc: Document, config: Dict[str, Any]) -> Dict[str, Any]:
             t_next = _norm_text(cover_paras[best_idx + 1].text)
             if t_next and year_rx.search(t_next):
                 role_map[best_idx + 1] = "Cover Author"
+
+    # Subtitle from remaining candidates via clusters, excluding title and author indices
+    title_author_set = set(k for k, v in role_map.items() if v in ("Cover Title", "Cover Author"))
+    rem_positions = [i for i, idx in enumerate(cand_idxs) if idx not in title_author_set]
+    if rem_positions:
+        rem_sizes = [sizes[i] for i in rem_positions]
+        # build clusters on remaining by reusing similarity on rem_positions order
+        rem_clusters: List[List[int]] = []
+        rem_cur: List[int] = []
+        def similar(a: float, b: float) -> bool:
+            if a == 0 or b == 0:
+                return a == b
+            return abs(a - b) <= max(a, b) * (delta / 100.0)
+        for j, sz in enumerate(rem_sizes):
+            if not rem_cur:
+                rem_cur = [rem_positions[j]]
+            else:
+                prev_sz = sizes[rem_cur[-1]]
+                if similar(prev_sz, sz):
+                    rem_cur.append(rem_positions[j])
+                else:
+                    rem_clusters.append(rem_cur)
+                    rem_cur = [rem_positions[j]]
+        if rem_cur:
+            rem_clusters.append(rem_cur)
+        # pick the cluster with highest average size as subtitle
+        if rem_clusters:
+            rem_clusters.sort(key=lambda idxs: sum(sizes[i] for i in idxs) / max(len(idxs), 1), reverse=True)
+            subtitle_cluster = rem_clusters[0]
+            for pos in subtitle_cluster:
+                role_map[cand_idxs[pos]] = "Cover Subtitle"
 
     # small refinement: if title lines are not centered and subtitle lines are centered, prefer centered ones for title/subtitle roles
     if prefer_center:
@@ -299,16 +411,52 @@ def apply_cover_styles(doc: Document, detection: Dict[str, Any], config: Dict[st
     assignments: Dict[int, str] = {int(k): v for k, v in detection.get("assignments", {}).items()}
     cover_idxs: List[int] = detection.get("cover_paragraph_indices", [])
 
+    clear_roles = (norm_cfg.get("clear_direct_formatting_on_roles", {}) or {})
+
+    def _clear_runs(p):
+        for r in p.runs:
+            try:
+                r.style = None
+            except Exception:
+                pass
+            f = r.font
+            try:
+                f.size = None
+            except Exception:
+                pass
+            try:
+                f.bold = None
+            except Exception:
+                pass
+            try:
+                f.italic = None
+            except Exception:
+                pass
+            try:
+                f.all_caps = None
+            except Exception:
+                pass
+            try:
+                f.small_caps = None
+            except Exception:
+                pass
+
     changed: List[Tuple[int, str]] = []
     for i in cover_idxs:
         p = doc.paragraphs[i]
         role = assignments.get(i)
         if role == "Cover Title":
             p.style = title_style
+            if bool(clear_roles.get("title", False)):
+                _clear_runs(p)
         elif role == "Cover Subtitle":
             p.style = subtitle_style
+            if bool(clear_roles.get("subtitle", False)):
+                _clear_runs(p)
         elif role == "Cover Author":
             p.style = author_style
+            if bool(clear_roles.get("author", False)):
+                _clear_runs(p)
         else:
             if norm_cfg.get("collapse_misc_to_normal", True):
                 p.style = doc.styles["Normal"]
