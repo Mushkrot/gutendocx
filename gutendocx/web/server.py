@@ -27,8 +27,12 @@ app.add_middleware(
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-if os.path.isdir(os.path.join(os.getcwd(), "output")):
-    app.mount("/output", StaticFiles(directory=os.path.join(os.getcwd(), "output")), name="output")
+OUTPUT_DIR = os.path.join(os.getcwd(), "output")
+try:
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+except Exception:
+    pass
+app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 
 
 @app.get("/")
@@ -89,6 +93,24 @@ def cover_analyze(req: AnalyzeRequest) -> Dict[str, Any]:
             vision=bool(req.vision),
         )
         return res
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/files/simples")
+def list_simples() -> Dict[str, Any]:
+    try:
+        base = os.path.join(os.getcwd(), "Simples")
+        if not os.path.isdir(base):
+            return {"files": []}
+        files = []
+        for name in sorted(os.listdir(base)):
+            n = str(name)
+            if n.startswith("~$"):
+                continue
+            if n.lower().endswith(".docx"):
+                files.append(f"Simples/{n}")
+        return {"files": files}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

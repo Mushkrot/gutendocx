@@ -19,6 +19,7 @@
   <div class="row">
     <label for="inputPath">Input DOCX path</label>
     <input id="inputPath" type="text" value="Simples/test2.docx" />
+    <select id="docPicker" style="margin-left:8px; min-width:240px;"></select>
   </div>
   <div class="row">
     <label for="configPath">Config path (optional)</label>
@@ -62,6 +63,14 @@
     </div>
     <div>
       <label><input id="toggleOverlay" type="checkbox" checked /> Show overlay</label>
+      <label style="margin-left:8px;"><input id="showTitle" type="checkbox" checked /> Title</label>
+      <label style="margin-left:8px;"><input id="showSubtitle" type="checkbox" checked /> Subtitle</label>
+      <label style="margin-left:8px;"><input id="showAuthor" type="checkbox" checked /> Author</label>
+      <div id="legend" class="hint" style="margin-top:6px;">
+        <span style="display:inline-block; width:12px; height:12px; background:#e91e63; margin-right:4px; border:1px solid #e91e63;"></span> Title
+        <span style="display:inline-block; width:12px; height:12px; background:#4caf50; margin:0 4px 0 12px; border:1px solid #4caf50;"></span> Subtitle
+        <span style="display:inline-block; width:12px; height:12px; background:#3f51b5; margin:0 4px 0 12px; border:1px solid #3f51b5;"></span> Author
+      </div>
     </div>
   </div>
   <div class="row">
@@ -150,6 +159,25 @@
     });
     updateModelUIState();
 
+    async function loadDocxList() {
+      try {
+        const res = await fetch(api('/files/simples'));
+        const data = await res.json();
+        const sel = $("docPicker");
+        sel.innerHTML = '';
+        const files = (data && data.files) || [];
+        for (const f of files) {
+          const opt = document.createElement('option');
+          opt.value = f; opt.textContent = f;
+          sel.appendChild(opt);
+        }
+        sel.addEventListener('change', () => {
+          $("inputPath").value = sel.value || $("inputPath").value;
+        });
+      } catch {}
+    }
+    loadDocxList();
+
     function drawOverlay(items) {
       const img = $("coverImg");
       const cvs = $("overlay");
@@ -169,8 +197,24 @@
       for (const it of items) {
         const [x,y,bw,bh] = it.bbox || [];
         if (typeof x !== 'number') continue;
-        ctx.strokeStyle = it.role === 'title' ? '#e91e63' : (it.role === 'author' ? '#3f51b5' : '#4caf50');
+        if (it.role === 'title' && !$("showTitle").checked) continue;
+        if (it.role === 'subtitle' && !$("showSubtitle").checked) continue;
+        if (it.role === 'author' && !$("showAuthor").checked) continue;
+        const color = it.role === 'title' ? '#e91e63' : (it.role === 'author' ? '#3f51b5' : '#4caf50');
+        ctx.strokeStyle = color;
         ctx.strokeRect(x*w, y*h, bw*w, bh*h);
+        // confidence label
+        try {
+          const conf = typeof it.confidence === 'number' ? it.confidence : undefined;
+          if (conf !== undefined) {
+            const label = `${it.role} ${(conf*100).toFixed(0)}%`;
+            ctx.fillStyle = 'rgba(255,255,255,0.8)';
+            ctx.fillRect(x*w, y*h - 16, ctx.measureText(label).width + 8, 16);
+            ctx.fillStyle = color;
+            ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif';
+            ctx.fillText(label, x*w + 4, y*h - 4);
+          }
+        } catch {}
       }
     }
 
@@ -201,6 +245,9 @@
       if (!jsonTxt) return;
       try { const data = JSON.parse(jsonTxt); drawOverlay(data.vision_items || (data.detection && data.detection.vision_items) || []); } catch {}
     });
+    $("showTitle").addEventListener('change', () => $("toggleOverlay").dispatchEvent(new Event('change')));
+    $("showSubtitle").addEventListener('change', () => $("toggleOverlay").dispatchEvent(new Event('change')));
+    $("showAuthor").addEventListener('change', () => $("toggleOverlay").dispatchEvent(new Event('change')));
 
     $("btnAnalyze").addEventListener('click', async () => {
       const payload = getPayload(true);
