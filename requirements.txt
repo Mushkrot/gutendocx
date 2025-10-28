@@ -6,3 +6,5 @@ openai
 python-dotenv
 pdf2image
 Pillow
+fastapi
+uvicorn
