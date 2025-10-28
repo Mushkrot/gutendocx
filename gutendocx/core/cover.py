@@ -482,11 +482,25 @@ def _ensure_output_path(out_dir: str, input_path: str, versioning: bool = True) 
         i += 1
 
 
-def run_cover_pipeline(input_path: str, config: Dict[str, Any], out_dir: str, dry_run: bool = False, no_layout: bool = False) -> Dict[str, Any]:
+def run_cover_pipeline(input_path: str, config: Dict[str, Any], out_dir: str, dry_run: bool = False, no_layout: bool = False, vision: bool = False) -> Dict[str, Any]:
     loader = Loader()
     doc = loader.open(input_path)
 
-    detection = detect_cover_roles(doc, config)
+    use_vision = bool(vision or (((config.get("cover", {}) or {}).get("vision", {}) or {}).get("enabled", False)))
+    if use_vision:
+        try:
+            from .vision import detect_cover_roles_vision
+            detection = detect_cover_roles_vision(input_path, config)
+        except Exception as e:
+            detection = {
+                "cover_paragraph_indices": [],
+                "assignments": {},
+                "clusters": [],
+                "warnings": ["vision_failed", str(e)],
+                "skip": True,
+            }
+    else:
+        detection = detect_cover_roles(doc, config)
     applied = {"changed": []}
     if not detection.get("skip"):
         applied = apply_cover_styles(doc, detection, config)

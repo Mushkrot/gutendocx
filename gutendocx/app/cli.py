@@ -56,6 +56,7 @@ def cmd_cover(args):
             out_dir=out_dir,
             dry_run=bool(args.dry_run),
             no_layout=bool(args.no_layout),
+            vision=bool(getattr(args, "vision", False)),
         )
         if args.report:
             rep_dir = os.path.dirname(os.path.abspath(args.report))
@@ -106,6 +107,7 @@ def build_parser():
     p5.add_argument("--out-dir", required=False)
     p5.add_argument("--dry-run", action="store_true")
     p5.add_argument("--no-layout", action="store_true")
+    p5.add_argument("--vision", action="store_true")
     p5.add_argument("--report", required=False)
     p5.add_argument("--config", required=False)
     p5.set_defaults(func=cmd_cover)

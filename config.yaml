@@ -74,6 +74,13 @@ cover:
       title: true
       subtitle: false
       author: false
+  vision:
+    enabled: false
+    model: "gpt-5-mini"
+    render_dpi: 220
+    env_path: "~/shared_env/.env"
+    keep_rendered: true
+    out_dir: "output/vision"
 
 style_overrides:
   Title:
