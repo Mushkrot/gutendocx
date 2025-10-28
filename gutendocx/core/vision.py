@@ -72,6 +72,8 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
     out_dir = vision_cfg.get("out_dir", "output/vision")
     keep_rendered = bool(vision_cfg.get("keep_rendered", True))
     fallback_enabled = bool(vision_cfg.get("fallback_enabled", False))
+    t0 = time.time()
+    details: Dict[str, Any] = {"used_path": "responses" if str(model).lower().startswith("gpt-5") else "chat"}
 
     os.makedirs(out_dir, exist_ok=True)
 
@@ -94,6 +96,8 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
                 "model": model,
                 "rendered_png": rendered_png,
             },
+            "vision_items": [],
+            "vision_details": {**details, "elapsed_ms": int((time.time() - t0) * 1000)},
         }
 
     env_path = vision_cfg.get("env_path")
@@ -149,6 +153,7 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
             for alt in ("gpt-5-vision", "gpt-5.1-mini", "gpt-5.0-mini", "gpt-4o-mini"):
                 if alt not in candidates:
                     candidates.append(alt)
+        details["attempted_models"] = list(candidates)
         for model_try in candidates:
             resp = None
             use_responses = str(model_try).lower().startswith("gpt-5")
@@ -168,6 +173,7 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
                                 }
                             ],
                             temperature=0,
+                            response_format={"type": "json_object"},
                         )
                     else:
                         resp = client.chat.completions.create(
@@ -213,10 +219,53 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
             used_model = model_try
             txt = ""
             if use_responses:
+                # Try convenience property first
                 try:
                     txt = getattr(resp, "output_text", None) or ""
                 except Exception:
                     txt = ""
+                # Fallback: traverse the output structure for text
+                if not txt:
+                    try:
+                        out = getattr(resp, "output", None)
+                        if out:
+                            parts = []
+                            for item in out:
+                                try:
+                                    contents = getattr(item, "content", None) or []
+                                    for c in contents:
+                                        t = getattr(getattr(c, "text", None), "value", None)
+                                        if not t:
+                                            t = getattr(c, "text", None)
+                                        if isinstance(t, str) and t.strip():
+                                            parts.append(t)
+                                except Exception:
+                                    continue
+                            if parts:
+                                txt = "\n".join(parts)
+                    except Exception:
+                        pass
+                # Last resort: model_dump dict walk
+                if not txt:
+                    try:
+                        data = resp.model_dump()
+                        # common path: data['output'][0]['content'][0]['text']
+                        outs = data.get("output") or []
+                        parts = []
+                        for it in outs:
+                            for c in (it.get("content") or []):
+                                t = None
+                                txt_obj = c.get("text") if isinstance(c, dict) else None
+                                if isinstance(txt_obj, dict):
+                                    t = txt_obj.get("value") or txt_obj.get("text")
+                                elif isinstance(txt_obj, str):
+                                    t = txt_obj
+                                if isinstance(t, str) and t.strip():
+                                    parts.append(t)
+                        if parts:
+                            txt = "\n".join(parts)
+                    except Exception:
+                        pass
             if not txt:
                 try:
                     txt = resp.choices[0].message.content or ""
@@ -243,6 +292,7 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
     used_model = model
     try:
         items, used_model = _call_openai_items(rendered_png, model)
+        details["used_model"] = used_model
     except Exception as e:
         warnings.extend(["vision_call_failed", str(e)])
         return {
@@ -252,10 +302,12 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
             "warnings": warnings,
             "skip": True,
             "vision": {
-                "model": used_model,
+                "model": details.get("used_model") or model,
                 "rendered_png": rendered_png,
                 "keep_rendered": keep_rendered,
             },
+            "vision_items": [],
+            "vision_details": {**details, "error": str(e), "elapsed_ms": int((time.time() - t0) * 1000)},
         }
 
     min_conf = float(vision_cfg.get("min_confidence", 0.6))
@@ -287,6 +339,8 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
                 "rendered_png": rendered_png,
                 "keep_rendered": keep_rendered,
             },
+            "vision_items": [],
+            "vision_details": {**details, "elapsed_ms": int((time.time() - t0) * 1000)},
         }
 
     doc = Document(input_path)
@@ -311,6 +365,8 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
                 "rendered_png": rendered_png,
                 "keep_rendered": keep_rendered,
             },
+            "vision_items": norm_items,
+            "vision_details": {**details, "elapsed_ms": int((time.time() - t0) * 1000)},
         }
     cand_idxs = [i for i, p in enumerate(cover_paras) if not _is_empty_para(p) and not _is_decorative_line(p.text)]
     if not cand_idxs:
@@ -326,6 +382,8 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
                 "rendered_png": rendered_png,
                 "keep_rendered": keep_rendered,
             },
+            "vision_items": norm_items,
+            "vision_details": {**details, "elapsed_ms": int((time.time() - t0) * 1000)},
         }
 
     norm_items.sort(key=lambda d: d["y"])
@@ -356,6 +414,8 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
                 "rendered_png": rendered_png,
                 "keep_rendered": keep_rendered,
             },
+            "vision_items": norm_items,
+            "vision_details": {**details, "elapsed_ms": int((time.time() - t0) * 1000)},
         }
 
     have_author = any(v == "Cover Author" for v in assignments.values())
@@ -392,4 +452,6 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
             "rendered_png": rendered_png,
             "keep_rendered": keep_rendered,
         },
+        "vision_items": norm_items,
+        "vision_details": {**details, "elapsed_ms": int((time.time() - t0) * 1000), "min_confidence": float(vision_cfg.get("min_confidence", 0.6))},
     }

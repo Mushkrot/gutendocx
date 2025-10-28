@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GutenDocx Cover UI (MVP)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    .row { margin-bottom: 12px; }
+    label { display: inline-block; min-width: 160px; }
+    input[type=text] { width: 420px; }
+    textarea { width: 100%; height: 260px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    button { margin-right: 8px; }
+    .hint { color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>GutenDocx — Cover UI (MVP)</h1>
+  <div class="row">
+    <label for="inputPath">Input DOCX path</label>
+    <input id="inputPath" type="text" value="Simples/test2.docx" />
+  </div>
+  <div class="row">
+    <label for="configPath">Config path (optional)</label>
+    <input id="configPath" type="text" value="config.yaml" />
+  </div>
+  <div class="row">
+    <label>Options</label>
+    <label><input id="vision" type="checkbox" checked /> Vision</label>
+    <label><input id="dryRun" type="checkbox" checked /> Dry run</label>
+    <label><input id="noLayout" type="checkbox" checked /> No layout</label>
+  </div>
+  <div class="row" id="confRow">
+    <label for="minConf">Min confidence</label>
+    <input id="minConf" type="range" min="0.3" max="0.9" step="0.05" value="0.6" />
+    <span id="minConfVal" class="hint" style="margin-left:8px;">0.60</span>
+  </div>
+  <div class="row">
+    <label for="modelSel">Model</label>
+    <select id="modelSel">
+      <option value="gpt-5-mini">GPT-5 Mini</option>
+      <option value="gpt-5">GPT-5</option>
+      <option value="gpt-5-nano">GPT-5 Nano</option>
+      <option value="gpt-4o">GPT-4o</option>
+      <option value="gpt-4o-mini" selected>GPT-4o Mini (Recommended)</option>
+      <option value="gpt-4.1">GPT-4.1</option>
+      <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+      <option value="gpt-4.1-nano">GPT-4.1 Nano</option>
+    </select>
+    <span id="costEst" class="hint" style="margin-left:8px;">~$0.000</span>
+  </div>
+  <div class="row">
+    <button id="btnAnalyze">Analyze</button>
+    <button id="btnApply">Apply</button>
+    <span class="hint">Analyze = preview JSON. Apply = write styles and save DOCX.</span>
+  </div>
+  <div class="row" id="previewRow" style="display:none;">
+    <label>Preview</label>
+    <div id="imgWrap" style="position:relative; display:inline-block; border:1px solid #ddd;">
+      <img id="coverImg" alt="rendered cover" style="max-width:640px; display:block;" />
+      <canvas id="overlay" style="position:absolute; left:0; top:0; pointer-events:none;"></canvas>
+    </div>
+    <div>
+      <label><input id="toggleOverlay" type="checkbox" checked /> Show overlay</label>
+    </div>
+  </div>
+  <div class="row">
+    <label>Result</label>
+    <textarea id="output" readonly></textarea>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const api = (p) => `${location.origin}${p}`;
+
+    // Pricing per 1M tokens (approx, from user's table)
+    const PRICES = {
+      "gpt-4o": { in: 2.50, out: 10.00 },
+      "gpt-4o-mini": { in: 0.15, out: 0.60 },
+      "gpt-4.1": { in: 2.00, out: 8.00 },
+      "gpt-4.1-mini": { in: 0.40, out: 1.60 },
+      "gpt-4.1-nano": { in: 0.10, out: 0.40 },
+      "gpt-5": { in: 1.25, out: 10.00 },
+      "gpt-5-mini": { in: 0.25, out: 2.00 },
+      "gpt-5-nano": { in: 0.05, out: 0.40 },
+    };
+
+    // Rough token estimates per request (Vision ON)
+    // One image + concise JSON output
+    const EST_PROMPT_TOKENS = 300;   // instruction + system
+    const EST_IMAGE_TOKENS  = 1200;  // compressed image embedding (approx)
+    const EST_OUTPUT_TOKENS = 250;   // JSON result
+
+    function estimateCost() {
+      const vision = $("vision").checked;
+      const model = $("modelSel").value;
+      const prices = PRICES[model];
+      if (!vision || !prices) {
+        $("costEst").textContent = "~$0.000";
+        return;
+      }
+      const inTok = EST_PROMPT_TOKENS + EST_IMAGE_TOKENS;
+      const outTok = EST_OUTPUT_TOKENS;
+      const costIn = (inTok / 1_000_000) * prices.in;
+      const costOut = (outTok / 1_000_000) * prices.out;
+      const total = costIn + costOut;
+      $("costEst").textContent = `~$${total.toFixed(4)} (in ${inTok} tok, out ${outTok} tok)`;
+    }
+
+    function updateModelUIState() {
+      const disabled = !$("vision").checked;
+      $("modelSel").disabled = disabled;
+      $("costEst").style.opacity = disabled ? 0.4 : 1;
+      $("minConf").disabled = disabled;
+      $("minConfVal").style.opacity = disabled ? 0.4 : 1;
+      $("confRow").style.opacity = disabled ? 0.6 : 1;
+      estimateCost();
+    }
+
+    async function callApi(path, body) {
+      const res = await fetch(api(path), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status}: ${txt}`);
+      }
+      return await res.json();
+    }
+
+    function getPayload(isDryRun) {
+      return {
+        input: $("inputPath").value.trim(),
+        config_path: $("configPath").value.trim() || null,
+        vision: $("vision").checked,
+        no_layout: $("noLayout").checked,
+        model: $("modelSel").value,
+        min_confidence: parseFloat($("minConf").value),
+        ...(isDryRun ? { dry_run: true } : {})
+      };
+    }
+
+    $("vision").addEventListener('change', updateModelUIState);
+    $("modelSel").addEventListener('change', estimateCost);
+    $("minConf").addEventListener('input', () => {
+      $("minConfVal").textContent = parseFloat($("minConf").value).toFixed(2);
+      estimateCost();
+    });
+    updateModelUIState();
+
+    function drawOverlay(items) {
+      const img = $("coverImg");
+      const cvs = $("overlay");
+      const show = $("toggleOverlay").checked;
+      const wrap = $("imgWrap");
+      if (!img.src || !show || !items || !items.length) {
+        cvs.width = 0; cvs.height = 0; return;
+      }
+      const w = img.clientWidth;
+      const h = img.clientHeight;
+      cvs.width = w; cvs.height = h;
+      cvs.style.width = w + 'px';
+      cvs.style.height = h + 'px';
+      const ctx = cvs.getContext('2d');
+      ctx.clearRect(0,0,w,h);
+      ctx.lineWidth = 2;
+      for (const it of items) {
+        const [x,y,bw,bh] = it.bbox || [];
+        if (typeof x !== 'number') continue;
+        ctx.strokeStyle = it.role === 'title' ? '#e91e63' : (it.role === 'author' ? '#3f51b5' : '#4caf50');
+        ctx.strokeRect(x*w, y*h, bw*w, bh*h);
+      }
+    }
+
+    async function maybeShowPreview(json) {
+      try {
+        const v = (json && json.detection && json.detection.vision) || json.vision;
+        const items = (json && json.detection && json.detection.vision_items) || json.vision_items;
+        const path = v && v.rendered_png;
+        if (path && $("vision").checked) {
+          $("previewRow").style.display = '';
+          const url = `${location.origin}/${path.startsWith('output/') ? path : 'output/' + path}`;
+          await new Promise((resolve, reject) => {
+            const img = $("coverImg");
+            img.onload = () => { drawOverlay(items); resolve(); };
+            img.onerror = reject;
+            img.src = url;
+          });
+        } else {
+          $("previewRow").style.display = 'none';
+        }
+      } catch (_) {
+        $("previewRow").style.display = 'none';
+      }
+    }
+
+    $("toggleOverlay").addEventListener('change', () => {
+      const jsonTxt = $("output").value.trim();
+      if (!jsonTxt) return;
+      try { const data = JSON.parse(jsonTxt); drawOverlay(data.vision_items || (data.detection && data.detection.vision_items) || []); } catch {}
+    });
+
+    $("btnAnalyze").addEventListener('click', async () => {
+      const payload = getPayload(true);
+      $("output").value = 'Running /cover/analyze...';
+      try {
+        const json = await callApi('/cover/analyze', payload);
+        $("output").value = JSON.stringify(json, null, 2);
+        await maybeShowPreview(json);
+      } catch (e) {
+        $("output").value = String(e);
+      }
+    });
+
+    $("btnApply").addEventListener('click', async () => {
+      const payload = getPayload(false);
+      $("output").value = 'Running /cover/apply...';
+      try {
+        const json = await callApi('/cover/apply', payload);
+        $("output").value = JSON.stringify(json, null, 2);
+        await maybeShowPreview(json);
+      } catch (e) {
+        $("output").value = String(e);
+      }
+    });
+  </script>
+</body>
+</html>

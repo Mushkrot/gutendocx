@@ -518,13 +518,26 @@ def run_cover_pipeline(input_path: str, config: Dict[str, Any], out_dir: str, dr
     out_path = _ensure_output_path(out_dir, input_path, versioning=versioning)
 
     saved_path = None
-    if not dry_run:
+    should_save = (not dry_run) and (
+        bool(applied.get("changed")) or (not no_layout and not detection.get("skip"))
+    )
+    if should_save:
         saved_path = loader.save(doc, out_path)
+    else:
+        # Do not save unchanged document; emit a warning for visibility.
+        try:
+            w = detection.get("warnings")
+            if isinstance(w, list):
+                w.append("no_changes_not_saved")
+            else:
+                detection["warnings"] = ["no_changes_not_saved"]
+        except Exception:
+            pass
 
     return {
         "detection": detection,
         "applied": applied,
-        "output_path": saved_path or out_path,
+        "output_path": saved_path,
         "dry_run": dry_run,
         "layout_applied": not no_layout,
     }
