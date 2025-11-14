@@ -51,6 +51,7 @@ class AnalyzeRequest(BaseModel):
     config_path: Optional[str] = None
     model: Optional[str] = None
     min_confidence: Optional[float] = None
+    styles: Optional[Dict[str, Any]] = None
 
 
 class ApplyRequest(BaseModel):
@@ -60,6 +61,7 @@ class ApplyRequest(BaseModel):
     config_path: Optional[str] = None
     model: Optional[str] = None
     min_confidence: Optional[float] = None
+    styles: Optional[Dict[str, Any]] = None
 
 
 @app.get("/health")
@@ -82,6 +84,19 @@ def cover_analyze(req: AnalyzeRequest) -> Dict[str, Any]:
             v = c.get("vision", {}) or {}
             v["min_confidence"] = float(req.min_confidence)
             c["vision"] = v
+            cfg["cover"] = c
+        if req.styles:
+            c = cfg.get("cover", {}) or {}
+            s = c.get("styles", {}) or {}
+            for role in ("title", "subtitle", "author"):
+                ov = (req.styles.get(role) or {}) if isinstance(req.styles, dict) else {}
+                if ov:
+                    cur = s.get(role, {}) or {}
+                    f = cur.get("font", {}) or {}
+                    f.update({k: v for k, v in ov.items() if v is not None})
+                    cur["font"] = f
+                    s[role] = cur
+            c["styles"] = s
             cfg["cover"] = c
         # Ensure no layout changes during analyze unless explicitly disabled
         res = run_cover_pipeline(
@@ -130,6 +145,19 @@ def cover_apply(req: ApplyRequest) -> Dict[str, Any]:
             v = c.get("vision", {}) or {}
             v["min_confidence"] = float(req.min_confidence)
             c["vision"] = v
+            cfg["cover"] = c
+        if req.styles:
+            c = cfg.get("cover", {}) or {}
+            s = c.get("styles", {}) or {}
+            for role in ("title", "subtitle", "author"):
+                ov = (req.styles.get(role) or {}) if isinstance(req.styles, dict) else {}
+                if ov:
+                    cur = s.get(role, {}) or {}
+                    f = cur.get("font", {}) or {}
+                    f.update({k: v for k, v in ov.items() if v is not None})
+                    cur["font"] = f
+                    s[role] = cur
+            c["styles"] = s
             cfg["cover"] = c
         res = run_cover_pipeline(
             input_path=req.input,

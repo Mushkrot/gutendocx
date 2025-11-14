@@ -107,6 +107,11 @@ _This list is derived from the PRD “Word Style Normalizer & Layout Engine (Win
 - [ ] **GUI-4** Layout toggles (start at 2, show on blank page). **Dependencies:** LAY-2/3/6. **AI:** easy
 - [ ] **GUI-5** Batch run with progress. **Dependencies:** BATCH-1/2. **AI:** medium
 
+### Web UI (MVP) progress indicator
+
+- [x] **GUI-WEB-Progress-A** Stage A: Busy overlay + spinner + toasts; buttons disabled during work; wired to Analyze/Apply. (Extensible for Stage B)
+- [ ] **GUI-WEB-Progress-B** Stage B: Job model API (`POST /jobs/*`, `GET /jobs/{id}`) + polling/SSE for real progress and multi-step statuses.
+
 ---
 
 ## 5.x / 7.x Cross‑Platform & Non‑Functional — `PLAT` / `NFR`
