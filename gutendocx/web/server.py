@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from gutendocx.core.config import load_config
 from gutendocx.core.cover import run_cover_pipeline
@@ -23,6 +24,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+class NoCacheMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+
+app.add_middleware(NoCacheMiddleware)
+
 # Serve minimal static UI
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(STATIC_DIR):
@@ -33,6 +46,25 @@ try:
 except Exception:
     pass
 app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
+
+
+def _build_download_meta(saved_path: Optional[str]) -> Optional[Dict[str, str]]:
+    """Return download metadata if the saved file lives under OUTPUT_DIR."""
+    if not saved_path:
+        return None
+    abs_path = os.path.abspath(saved_path)
+    try:
+        common = os.path.commonpath([abs_path, OUTPUT_DIR])
+    except ValueError:
+        return None
+    if common != OUTPUT_DIR:
+        return None
+    rel_path = os.path.relpath(abs_path, OUTPUT_DIR)
+    normalized = rel_path.replace(os.sep, "/")
+    return {
+        "filename": os.path.basename(abs_path),
+        "url": f"/output/{normalized}",
+    }
 
 
 @app.get("/")
@@ -103,7 +135,7 @@ def cover_analyze(req: AnalyzeRequest) -> Dict[str, Any]:
             input_path=req.input,
             config=cfg,
             out_dir=(cfg.get("output", {}) or {}).get("dir", "output"),
-            dry_run=bool(req.dry_run),
+            dry_run=False,
             no_layout=bool(req.no_layout),
             vision=bool(req.vision),
         )
@@ -167,6 +199,9 @@ def cover_apply(req: ApplyRequest) -> Dict[str, Any]:
             no_layout=bool(req.no_layout),
             vision=bool(req.vision),
         )
+        download_meta = _build_download_meta(res.get("output_path"))
+        if download_meta:
+            res["download"] = download_meta
         return res
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

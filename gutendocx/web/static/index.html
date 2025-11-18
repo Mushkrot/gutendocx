@@ -32,6 +32,13 @@
     .toast { background: #111; color: #fff; padding: 10px 12px; border-radius: 8px; min-width: 220px; box-shadow: 0 6px 16px rgba(0,0,0,0.15); opacity: 0.95; }
     .toast.success { background: #16a34a; }
     .toast.error { background: #dc2626; }
+    .download-card { border: 1px dashed #2563eb; padding: 12px; border-radius: 8px; background: #f0f6ff; display: flex; align-items: center; justify-content: space-between; gap: 12px; max-width: 460px; }
+    .download-card strong { display: block; margin-bottom: 4px; }
+    .row-flex { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label { min-width: unset; }
+    .field input[type=text] { width: 340px; }
+    .download-field { flex: 1; min-width: 260px; }
   </style>
 </head>
 <body>
@@ -41,9 +48,21 @@
     <input id="inputPath" type="text" value="Simples/test2.docx" />
     <select id="docPicker" style="margin-left:8px; min-width:240px;"></select>
   </div>
-  <div class="row">
-    <label for="configPath">Config path (optional)</label>
-    <input id="configPath" type="text" value="config.yaml" />
+  <div class="row row-flex">
+    <div class="field">
+      <label for="configPath">Config path (optional)</label>
+      <input id="configPath" type="text" value="config.yaml" />
+    </div>
+    <div class="field download-field" id="downloadRow" style="display:none;">
+      <label>Download</label>
+      <div class="download-card">
+        <div>
+          <strong>Your file is ready</strong>
+          <span id="downloadFileName" class="hint"></span>
+        </div>
+        <button id="downloadBtn">Download</button>
+      </div>
+    </div>
   </div>
   <div class="row">
     <label>Scope</label>
@@ -53,7 +72,6 @@
   <div class="row">
     <label>Options</label>
     <label><input id="vision" type="checkbox" checked /> Vision</label>
-    <label><input id="dryRun" type="checkbox" checked /> Dry run</label>
     <label><input id="noLayout" type="checkbox" checked /> No layout</label>
   </div>
   <div class="row" id="confRow">
@@ -303,7 +321,8 @@
       return await res.json();
     }
 
-    function getPayload(isDryRun) {
+    function getPayload(opts = {}) {
+      const { forceDryRun = false, includeDryRun = true } = opts;
       const styles = collectStyles();
       return {
         input: $("inputPath").value.trim(),
@@ -314,7 +333,7 @@
         scope: ($("scopeWhole") && $("scopeWhole").checked) ? "whole" : "cover",
         min_confidence: parseFloat($("minConf").value),
         ...(Object.keys(styles).length ? { styles } : {}),
-        ...(isDryRun ? { dry_run: true } : {})
+        ...(includeDryRun ? { dry_run: !!forceDryRun } : {}),
       };
     }
 
@@ -338,6 +357,32 @@
       box.appendChild(n);
       setTimeout(() => { try { box.removeChild(n); } catch {} }, ms);
     }
+
+    const downloadState = {
+      meta: null,
+    };
+
+    function updateDownloadUi(meta) {
+      downloadState.meta = meta || null;
+      const row = $("downloadRow");
+      if (meta && meta.url) {
+        $("downloadFileName").textContent = meta.filename || meta.url.split('/').pop();
+        row.style.display = '';
+      } else {
+        row.style.display = 'none';
+      }
+    }
+
+    $("downloadBtn").addEventListener('click', () => {
+      const meta = downloadState.meta;
+      if (!meta || !meta.url) return;
+      const link = document.createElement('a');
+      link.href = meta.url.startsWith('http') ? meta.url : api(meta.url);
+      if (meta.filename) link.download = meta.filename;
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => document.body.removeChild(link), 0);
+    });
 
     $("vision").addEventListener('change', updateModelUIState);
     $("modelSel").addEventListener('change', estimateCost);
@@ -517,10 +562,11 @@
     $("showAuthor").addEventListener('change', () => $("toggleOverlay").dispatchEvent(new Event('change')));
 
     $("btnAnalyze").addEventListener('click', async () => {
-      const payload = getPayload(true);
+      const payload = getPayload({ forceDryRun: true, includeDryRun: true });
       $("output").value = 'Running /cover/analyze...';
       setBusy(true, 'Analyzing…');
       setButtonsDisabled(true);
+      updateDownloadUi(null);
       try {
         const json = await callApi('/cover/analyze', payload);
         $("output").value = JSON.stringify(json, null, 2);
@@ -536,15 +582,19 @@
     });
 
     $("btnApply").addEventListener('click', async () => {
-      const payload = getPayload(false);
+      const payload = getPayload({ includeDryRun: false });
       $("output").value = 'Running /cover/apply...';
       setBusy(true, 'Applying styles…');
       setButtonsDisabled(true);
+      updateDownloadUi(null);
       try {
         const json = await callApi('/cover/apply', payload);
         $("output").value = JSON.stringify(json, null, 2);
         await maybeShowPreview(json);
-        if (json && json.output_path) {
+        if (json && json.download) {
+          updateDownloadUi(json.download);
+          showToast('success', 'Your file is ready for download');
+        } else if (json && json.output_path) {
           showToast('success', `Saved: ${json.output_path}`);
         } else {
           showToast('success', 'Apply completed');
