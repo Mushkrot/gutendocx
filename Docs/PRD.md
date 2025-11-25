@@ -160,6 +160,23 @@ Implement via OpenXML only:
   - Run processing and show logs.  
 - Auto‑save config changes.
 
+### 4.12 Web API processing modes (Cover vs Whole document)
+The web API exposes separate endpoints for cover processing and whole-document processing:
+- `POST /cover/analyze`, `POST /cover/apply` — operate on the **cover** only (Title/Subtitle/Author, cover styles, layout/sections A–C, optional Vision/LLM).
+- `POST /whole/analyze`, `POST /whole/apply` — operate on the **body of the document (Section C)** only, excluding the cover and the blank second page. Whole-document logic is purely algorithmic (no LLM).
+
+There are two conceptual orchestration options when the user wants to process both cover **and** whole document:
+- **Variant 1 (current, simpler): sequential passes**  
+  - First run the cover pipeline via `/cover/apply`, producing an intermediate DOCX (with sections A/B/C and cover styles applied).  
+  - Then run the whole-document pipeline via `/whole/apply`, using the intermediate file as input and producing the final DOCX.  
+  - This results in **two passes over the document and two output versions** (e.g., `*_v_01.docx`, then `*_v_02.docx`), but keeps implementation simple and each pipeline isolated.  
+  - This Variant 1 is the initial implementation and is acceptable for early iterations and smaller documents.
+- **Variant 2 (future improvement): single-pass combined pipeline**  
+  - Load the DOCX once, apply cover logic and whole-document logic in a single in-memory pipeline, then save **one** final DOCX.  
+  - Optionally expose a combined endpoint (e.g., `/doc/apply`) that internally orchestrates both cover and whole processing based on user options.  
+  - This reduces the number of temporary versions and can improve performance on large documents or in batch scenarios, at the cost of more complex orchestration code.
+- **Note:** The project intentionally starts with **Variant 1** for clarity and faster development. If performance (total processing time) or the proliferation of intermediate DOCX versions becomes a problem in real usage, the team can revisit this section and migrate to **Variant 2** as a follow-up optimization.
+
 ---
 
 ## 5) Non‑Functional Requirements

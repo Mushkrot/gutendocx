@@ -49,6 +49,47 @@ def _add_page_field(paragraph):
     r._r.append(fldEnd)
 
 
+def ensure_update_fields_on_open(doc: Document, config: Dict[str, Any]) -> bool:
+    """Ensure the document has w:updateFields set according to config.
+
+    When layout.update_fields_on_open is true (default), Word will be
+    instructed to update fields such as TOC on document open.
+    """
+
+    layout_cfg = ((config or {}).get("layout", {}) or {})
+    flag = layout_cfg.get("update_fields_on_open", True)
+
+    try:
+        settings = doc.settings
+        element = settings.element
+    except Exception:
+        return False
+
+    try:
+        nodes = element.xpath("./w:updateFields")
+    except Exception:
+        nodes = []
+
+    node = None
+    if nodes:
+        node = nodes[0]
+        for extra in nodes[1:]:
+            try:
+                extra.getparent().remove(extra)
+            except Exception:
+                pass
+    if node is None:
+        node = OxmlElement("w:updateFields")
+        element.append(node)
+
+    try:
+        node.set(qn("w:val"), "true" if bool(flag) else "false")
+    except Exception:
+        return False
+
+    return True
+
+
 def apply_sections_and_numbering(doc: Document, config: Dict[str, Any], last_cover_para_index: int, first_body_para_index: int) -> None:
     """Create three logical sections:
     A) Cover (page 1, no number)

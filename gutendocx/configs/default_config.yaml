@@ -6,6 +6,8 @@ layout:
     show_numpages: false
   blank_page_after_cover: true
 
+  update_fields_on_open: true
+
 roles:
   Title: "Title"
   Subtitle: "Subtitle"
@@ -69,8 +71,10 @@ cover:
         all_caps: false
         align: center
   normalize:
-    collapse_misc_to_normal: true
+    collapse_misc_to_normal: false
     preserve_direct_formatting_on_misc: true
+    map_runs_to_char_styles: true
+    cleanup_unused_styles: false
 
 style_overrides:
   Title:
@@ -84,6 +88,8 @@ style_overrides:
     size_pt: 12
     align: "justify"
     line_spacing: 1.15
+    bold: false
+    italic: false
 
 remap_rules:
   Body:

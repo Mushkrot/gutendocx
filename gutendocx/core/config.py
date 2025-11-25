@@ -77,3 +77,16 @@ def load_config(path: str | None = None) -> Dict[str, Any]:
 
     merged = _deep_merge(defaults, project_cfg)
     return merged
+
+
+def save_config(cfg: Dict[str, Any], path: str | None = None) -> str:
+    """Persist configuration to disk, including the standard header.
+
+    Returns the absolute path to the config file.
+    """
+    abs_path = os.path.abspath(path or os.path.join(os.getcwd(), "config.yaml"))
+    os.makedirs(os.path.dirname(abs_path) or ".", exist_ok=True)
+    with open(abs_path, "w", encoding="utf-8") as f:
+        f.write(CONFIG_HEADER)
+        yaml.safe_dump(cfg or {}, f, sort_keys=False, allow_unicode=True)
+    return abs_path

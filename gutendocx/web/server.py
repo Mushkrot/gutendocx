@@ -9,9 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from gutendocx.core.config import load_config
+from gutendocx.core.config import load_config, save_config
 from gutendocx.core.cover import run_cover_pipeline
 from gutendocx.core.vision import detect_cover_roles_vision
+from gutendocx.core.whole import analyze_whole_document, apply_whole_document
 
 
 app = FastAPI(title="GutenDocx Web API", version="0.1.0")
@@ -80,6 +81,7 @@ class AnalyzeRequest(BaseModel):
     vision: bool = True
     no_layout: bool = True
     dry_run: bool = True
+    update_fields_on_open: Optional[bool] = None
     config_path: Optional[str] = None
     model: Optional[str] = None
     min_confidence: Optional[float] = None
@@ -90,6 +92,7 @@ class ApplyRequest(BaseModel):
     input: str
     vision: bool = True
     no_layout: bool = True
+    update_fields_on_open: Optional[bool] = None
     config_path: Optional[str] = None
     model: Optional[str] = None
     min_confidence: Optional[float] = None
@@ -105,6 +108,10 @@ def health() -> Dict[str, Any]:
 def cover_analyze(req: AnalyzeRequest) -> Dict[str, Any]:
     try:
         cfg = load_config(req.config_path)
+        if req.update_fields_on_open is not None:
+            layout_cfg = (cfg.get("layout") or {}) or {}
+            layout_cfg["update_fields_on_open"] = bool(req.update_fields_on_open)
+            cfg["layout"] = layout_cfg
         if req.model:
             c = cfg.get("cover", {}) or {}
             v = c.get("vision", {}) or {}
@@ -144,6 +151,91 @@ def cover_analyze(req: AnalyzeRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/whole/analyze")
+def whole_analyze(req: AnalyzeRequest) -> Dict[str, Any]:
+    """Analyze styles in the whole document body (beyond the cover).
+
+    This endpoint performs a read-only pass over the DOCX and returns
+    an inventory of paragraph styles and special formatting in the
+    body section. It does not modify or save the document.
+    """
+    try:
+        cfg = load_config(req.config_path)
+        if req.update_fields_on_open is not None:
+            layout_cfg = (cfg.get("layout") or {}) or {}
+            layout_cfg["update_fields_on_open"] = bool(req.update_fields_on_open)
+            cfg["layout"] = layout_cfg
+        res = analyze_whole_document(
+            input_path=req.input,
+            config=cfg,
+        )
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/whole/apply")
+def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
+    """Apply whole-document normalization to the body (beyond the cover).
+
+    This endpoint collapses non-protected paragraph styles in the body to
+    Normal and maps special run-level formatting combinations (bold/italic
+    etc.) to named character styles. It does not touch cover layout, TOC,
+    headers, or footers.
+    """
+    try:
+        cfg = load_config(req.config_path)
+        if req.update_fields_on_open is not None:
+            layout_cfg = (cfg.get("layout") or {}) or {}
+            layout_cfg["update_fields_on_open"] = bool(req.update_fields_on_open)
+            cfg["layout"] = layout_cfg
+        # Centralized overrides for Body style coming from the UI.
+        # These are merged into style_overrides.Body and persisted to
+        # config.yaml so that subsequent runs reuse the same settings.
+        if req.styles and isinstance(req.styles, dict):  # type: ignore[redundant-expr]
+            body_ov = req.styles.get("body")
+            if isinstance(body_ov, dict):
+                so = (cfg.get("style_overrides") or {}) or {}
+                cur_body = (so.get("Body") or {}) or {}
+                new_body = dict(cur_body)
+                fam = body_ov.get("family")
+                if isinstance(fam, str) and fam.strip():
+                    new_body["font"] = fam.strip()
+                size_val = body_ov.get("size_pt")
+                if isinstance(size_val, (int, float)) and size_val > 0:
+                    new_body["size_pt"] = float(size_val)
+                align = body_ov.get("align")
+                if isinstance(align, str) and align.strip():
+                    new_body["align"] = align.strip()
+                if "bold" in body_ov:
+                    new_body["bold"] = bool(body_ov.get("bold"))
+                if "italic" in body_ov:
+                    new_body["italic"] = bool(body_ov.get("italic"))
+                line_spacing = body_ov.get("line_spacing")
+                if isinstance(line_spacing, (int, float)) and line_spacing > 0:
+                    new_body["line_spacing"] = float(line_spacing)
+                spacing_before = body_ov.get("spacing_before_pt")
+                if isinstance(spacing_before, (int, float)) and spacing_before >= 0:
+                    new_body["spacing_before_pt"] = float(spacing_before)
+                spacing_after = body_ov.get("spacing_after_pt")
+                if isinstance(spacing_after, (int, float)) and spacing_after >= 0:
+                    new_body["spacing_after_pt"] = float(spacing_after)
+                so["Body"] = new_body
+                cfg["style_overrides"] = so
+        # Persist any changes coming from GUI (Body style, layout flags, etc.).
+        save_config(cfg, req.config_path)
+        res = apply_whole_document(
+            input_path=req.input,
+            config=cfg,
+        )
+        download_meta = _build_download_meta(res.get("output_path"))
+        if download_meta:
+            res["download"] = download_meta
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.get("/files/simples")
 def list_simples() -> Dict[str, Any]:
     try:
@@ -166,6 +258,10 @@ def list_simples() -> Dict[str, Any]:
 def cover_apply(req: ApplyRequest) -> Dict[str, Any]:
     try:
         cfg = load_config(req.config_path)
+        if req.update_fields_on_open is not None:
+            layout_cfg = (cfg.get("layout") or {}) or {}
+            layout_cfg["update_fields_on_open"] = bool(req.update_fields_on_open)
+            cfg["layout"] = layout_cfg
         if req.model:
             c = cfg.get("cover", {}) or {}
             v = c.get("vision", {}) or {}
@@ -191,6 +287,8 @@ def cover_apply(req: ApplyRequest) -> Dict[str, Any]:
                     s[role] = cur
             c["styles"] = s
             cfg["cover"] = c
+        # Persist any changes coming from GUI (cover styles, vision params, etc.).
+        save_config(cfg, req.config_path)
         res = run_cover_pipeline(
             input_path=req.input,
             config=cfg,

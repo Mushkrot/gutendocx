@@ -10,7 +10,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
 from .loader import Loader
-from .layout import apply_sections_and_numbering
+from .layout import apply_sections_and_numbering, ensure_update_fields_on_open
 
 
 def _pt(val) -> float:
@@ -511,6 +511,8 @@ def run_cover_pipeline(input_path: str, config: Dict[str, Any], out_dir: str, dr
 
     if not no_layout and not detection.get("skip"):
         apply_sections_and_numbering(doc, config, last_cover_idx, first_body_idx)
+
+    ensure_update_fields_on_open(doc, config)
 
     os.makedirs(out_dir, exist_ok=True)
     out_cfg = (config or {}).get("output", {})

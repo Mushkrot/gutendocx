@@ -1,0 +1,202 @@
+{
+  "whole": {
+    "body_start_index": 4,
+    "paragraph_styles": {
+      "2": {
+        "name": "Heading 2",
+        "count": 20,
+        "has_direct_overrides": true,
+        "samples": [
+          "LA VIERGE PALE \nA GASTON BONNIER.",
+          "PIETÀ",
+          "MENSONGE DE CHIEN"
+        ]
+      },
+      "3": {
+        "name": "Heading 3",
+        "count": 95,
+        "has_direct_overrides": true,
+        "samples": [
+          "I",
+          "II",
+          "III"
+        ]
+      },
+      "21": {
+        "name": "toc 2",
+        "count": 20,
+        "has_direct_overrides": true,
+        "samples": []
+      },
+      "a": {
+        "name": "Normal",
+        "count": 1227,
+        "has_direct_overrides": true,
+        "samples": [
+          "Il mettait au-dessus de sa tête angélique deux petites ailes courtes, légères et blanches, le bonnet d’Yvonne.",
+          "Yvonne était blonde, avec des yeux très bleus et un visage pâle, pâle comme le visage de ces madones en cire qu’on voit dans les églises de village, enfantines et anciennes, sous des globes de verre.",
+          "Oui, elle avait l’air d’une sainte mystique, la douce et blanche Yvonne, et c’est pour cela que Jacques l’avait aimée."
+        ]
+      },
+      "Para04": {
+        "name": "Para 04",
+        "count": 27,
+        "has_direct_overrides": true,
+        "samples": [
+          "LE PRÉSIDENT.",
+          "LE TÉMOIN.",
+          "L’AVOCAT."
+        ]
+      },
+      "Para08": {
+        "name": "Para 08",
+        "count": 13,
+        "has_direct_overrides": true,
+        "samples": [
+          "A Flourette.",
+          "A François Armagnin.",
+          "A Zanette."
+        ]
+      },
+      "Para09": {
+        "name": "Para 09",
+        "count": 12,
+        "has_direct_overrides": true,
+        "samples": [
+          "Les anciens officiers, qui portent leur chapeau",
+          "« Les voici ! » — Les voici, précédés des gamins",
+          "Mais quand un régiment ne va qu’à la parade,"
+        ]
+      },
+      "Para01": {
+        "name": "Para 01",
+        "count": 7,
+        "has_direct_overrides": true,
+        "samples": [
+          "AVE A\n Frédéric MONTENARD",
+          "*\n * *",
+          "*\n * *"
+        ]
+      },
+      "Para10": {
+        "name": "Para 10",
+        "count": 7,
+        "has_direct_overrides": true,
+        "samples": [
+          "A toi, le peintre exact des étés qui chauffent à blanc, et des ombres couleur de pervenche, je dédie ce livre, parce que tu y retrouveras quelques souvenirs de notre pays où ta bastide n’est pas loin de la mienne, où la lumière et l’azur sont des réalités brutales, où l’ombre est un rêve en vain désiré.",
+          "Tu retrouveras, dans ce petit livre, le potier notre voisin, le savetier et le maçon de notre village, la culture ardente des immortelles, inaltérables fleurs du souvenir, et cette histoire des deux étameurs, bonne à réjouir des simples, des enfants, des villageois restés candides.",
+          "Si tu veux essayer de lire, l’été, à l’ombre, emporte ce livre. C’est un recueil d’histoires brèves, lecture facile à couper de petits sommes rythmiques et doux, conseillers d’indulgence, et durant lesquels le songe du lecteur satisfait achève et embellit les rêves du conteur…"
+        ]
+      },
+      "Para15": {
+        "name": "Para 15",
+        "count": 4,
+        "has_direct_overrides": true,
+        "samples": [
+          "Pas bégueule,",
+          "Forte en gueule,",
+          "L’âne et le bœuf soufflent dessus"
+        ]
+      },
+      "Para18": {
+        "name": "Para 18",
+        "count": 2,
+        "has_direct_overrides": true,
+        "samples": [
+          "FIN"
+        ]
+      },
+      "Para28": {
+        "name": "Para 28",
+        "count": 1,
+        "has_direct_overrides": true,
+        "samples": [
+          "J. A."
+        ]
+      },
+      "Para29": {
+        "name": "Para 29",
+        "count": 1,
+        "has_direct_overrides": true,
+        "samples": [
+          "La Garde-près-Toulon, 10 juillet 1895."
+        ]
+      },
+      "Para30": {
+        "name": "Para 30",
+        "count": 1,
+        "has_direct_overrides": true,
+        "samples": [
+          "JACQUES KARDEC\n LIEUTENANT DE VAISSEAU"
+        ]
+      },
+      "Para31": {
+        "name": "Para 31",
+        "count": 1,
+        "has_direct_overrides": true,
+        "samples": [
+          "L’accusé s’éveille. Un rayon de soleil joue sur son lit. On est au mois de mai. On entend piailler sur les arbres voisins cent nichées de moineaux ensemble. Un valet de chambre est là, debout, souriant d’un air aimable :"
+        ]
+      },
+      "Para32": {
+        "name": "Para 32",
+        "count": 1,
+        "has_direct_overrides": true,
+        "samples": [
+          "L’enfant Jésus."
+        ]
+      },
+      "Para17": {
+        "name": "Para 17",
+        "count": 1,
+        "has_direct_overrides": true,
+        "samples": [
+          "Noluit consolari."
+        ]
+      },
+      "Para33": {
+        "name": "Para 33",
+        "count": 1,
+        "has_direct_overrides": true,
+        "samples": [
+          "— Où donc ?"
+        ]
+      },
+      "Para34": {
+        "name": "Para 34",
+        "count": 1,
+        "has_direct_overrides": true,
+        "samples": [
+          "— A la fenêtre,"
+        ]
+      },
+      "Para35": {
+        "name": "Para 35",
+        "count": 1,
+        "has_direct_overrides": true,
+        "samples": [
+          "SOUVENIR"
+        ]
+      }
+    },
+    "heading_styles": [
+      {
+        "style_key": "2",
+        "name": "Heading 2",
+        "level": 2,
+        "count": 20
+      },
+      {
+        "style_key": "3",
+        "name": "Heading 3",
+        "level": 3,
+        "count": 95
+      }
+    ],
+    "special_styles": [],
+    "summary": {
+      "body_paragraph_total": 1443,
+      "body_run_total": 1783
+    }
+  }
+}
