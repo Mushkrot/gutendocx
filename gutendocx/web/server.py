@@ -222,6 +222,35 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
                     new_body["spacing_after_pt"] = float(spacing_after)
                 so["Body"] = new_body
                 cfg["style_overrides"] = so
+            specials_ov = req.styles.get("specials")
+            if isinstance(specials_ov, dict):
+                so_specials = (cfg.get("special_overrides") or {}) or {}
+                for name, ov in specials_ov.items():
+                    if not isinstance(ov, dict):
+                        continue
+                    cur = (so_specials.get(name) or {}) or {}
+                    new = dict(cur)
+                    fam = ov.get("family") or ov.get("font")
+                    if isinstance(fam, str) and fam.strip():
+                        new["font"] = fam.strip()
+                    size_val = ov.get("size_pt")
+                    if isinstance(size_val, (int, float)) and size_val > 0:
+                        new["size_pt"] = float(size_val)
+                    if "bold" in ov:
+                        new["bold"] = bool(ov.get("bold"))
+                    if "italic" in ov:
+                        new["italic"] = bool(ov.get("italic"))
+                    if "underline" in ov:
+                        new["underline"] = bool(ov.get("underline"))
+                    if "strike" in ov:
+                        new["strike"] = bool(ov.get("strike"))
+                    if "all_caps" in ov:
+                        new["all_caps"] = bool(ov.get("all_caps"))
+                    if "small_caps" in ov:
+                        new["small_caps"] = bool(ov.get("small_caps"))
+                    if new:
+                        so_specials[name] = new
+                cfg["special_overrides"] = so_specials
         # Persist any changes coming from GUI (Body style, layout flags, etc.).
         save_config(cfg, req.config_path)
         res = apply_whole_document(

@@ -157,6 +157,98 @@ def _collect_used_style_ids(doc: Document) -> Dict[str, Set[str]]:
     }
 
 
+def _apply_special_style_overrides(doc: Document, config: Dict[str, Any]) -> Dict[str, Any]:
+    specials_cfg = (config or {}).get("special_overrides", {}) or {}
+    if not isinstance(specials_cfg, dict) or not specials_cfg:
+        return {"applied": False, "styles": {}}
+
+    applied: Dict[str, Dict[str, Any]] = {}
+
+    for name, ov in specials_cfg.items():
+        if not isinstance(ov, dict):
+            continue
+        try:
+            style = doc.styles[name]
+        except Exception:
+            try:
+                style = doc.styles.add_style(name, WD_STYLE_TYPE.CHARACTER)
+            except Exception:
+                continue
+        if getattr(style, "type", None) != WD_STYLE_TYPE.CHARACTER:
+            continue
+
+        changes: Dict[str, Any] = {}
+        try:
+            f = style.font
+        except Exception:
+            f = None
+        if f is None:
+            continue
+
+        font_name = ov.get("font") or ov.get("family")
+        size_pt = ov.get("size_pt")
+        bold = ov.get("bold") if "bold" in ov else None
+        italic = ov.get("italic") if "italic" in ov else None
+        underline = ov.get("underline") if "underline" in ov else None
+        strike = ov.get("strike") if "strike" in ov else None
+        all_caps = ov.get("all_caps") if "all_caps" in ov else None
+        small_caps = ov.get("small_caps") if "small_caps" in ov else None
+
+        if font_name:
+            try:
+                f.name = font_name
+                changes["font_family"] = font_name
+            except Exception:
+                pass
+        if isinstance(size_pt, (int, float)) and size_pt > 0:
+            try:
+                f.size = Pt(float(size_pt))
+                changes["size_pt"] = float(size_pt)
+            except Exception:
+                pass
+        if bold is not None:
+            try:
+                f.bold = bool(bold)
+                changes["bold"] = bool(bold)
+            except Exception:
+                pass
+        if italic is not None:
+            try:
+                f.italic = bool(italic)
+                changes["italic"] = bool(italic)
+            except Exception:
+                pass
+        if underline is not None:
+            try:
+                f.underline = bool(underline)
+                changes["underline"] = bool(underline)
+            except Exception:
+                pass
+        if strike is not None:
+            try:
+                f.strike = bool(strike)
+                changes["strike"] = bool(strike)
+            except Exception:
+                pass
+        if all_caps is not None:
+            try:
+                f.all_caps = bool(all_caps)
+                changes["all_caps"] = bool(all_caps)
+            except Exception:
+                pass
+        if small_caps is not None:
+            try:
+                f.small_caps = bool(small_caps)
+                changes["small_caps"] = bool(small_caps)
+            except Exception:
+                pass
+
+        if changes:
+            applied[name] = changes
+
+    return {"applied": bool(applied), "styles": applied}
+
+
 def _apply_body_style_overrides(doc: Document, config: Dict[str, Any]) -> Dict[str, Any]:
     """Apply centralized overrides for the Body paragraph style.
 
@@ -541,6 +633,7 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
                     pass
 
     body_overrides = _apply_body_style_overrides(doc, config)
+    special_overrides = _apply_special_style_overrides(doc, config)
 
     ensure_update_fields_on_open(doc, config)
 
@@ -614,6 +707,7 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
             "created_char_styles": sorted(created_char_styles),
             "styles_cleanup": cleanup_stats,
             "body_overrides": body_overrides,
+            "special_overrides": special_overrides,
         },
         "output_path": saved_path,
     }

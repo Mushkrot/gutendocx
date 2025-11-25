@@ -266,6 +266,13 @@
             <label><input id="bodyItalic" type="checkbox" /> Italic</label>
           </div>
         </div>
+        <div class="card" id="cardSpecials">
+          <div class="inline">
+            <label>Special text styles</label>
+            <span class="hint">Bold, Italic and similar inline emphasis detected in the body.</span>
+          </div>
+          <div id="specialStylesList"></div>
+        </div>
       </details>
     </div>
   </div>
@@ -313,6 +320,8 @@
       "Courier New","Verdana"
     ];
     const SIZE_PRESETS = [10,11,12,13,14,16,18,20,22,24,26,28,30,32,36,40,44,48,56,64];
+
+    let specialStylesCache = [];
 
     // Pricing per 1M tokens (approx, from user's table)
     const PRICES = {
@@ -391,6 +400,27 @@
         if (italicEl) body.italic = !!italicEl.checked;
       }
       if (Object.keys(body).length) styles.body = body;
+
+      const specialsOut = {};
+      for (const row of document.querySelectorAll('#specialStylesList .spec-style-row')) {
+        const name = row.getAttribute('data-style-name');
+        if (!name) continue;
+        const ovEl = row.querySelector('input[type="checkbox"][data-role="override"]');
+        if (!ovEl || !ovEl.checked) continue;
+        const famEl = row.querySelector('input[data-role="family"]');
+        const sizeEl = row.querySelector('input[data-role="size"]');
+        const boldEl = row.querySelector('input[data-role="bold"]');
+        const italicEl = row.querySelector('input[data-role="italic"]');
+        const out = {};
+        const fam = famEl && famEl.value ? famEl.value.trim() : '';
+        const sizeVal = sizeEl ? parseFloat(sizeEl.value || '') : NaN;
+        if (fam) out.family = fam;
+        if (!Number.isNaN(sizeVal)) out.size_pt = sizeVal;
+        if (boldEl) out.bold = !!boldEl.checked;
+        if (italicEl) out.italic = !!italicEl.checked;
+        if (Object.keys(out).length) specialsOut[name] = out;
+      }
+      if (Object.keys(specialsOut).length) styles.specials = specialsOut;
 
       return styles;
     }
@@ -573,6 +603,91 @@
         const paraTotal = typeof summary.body_paragraph_total === 'number' ? summary.body_paragraph_total : 0;
         const runTotal = typeof summary.body_run_total === 'number' ? summary.body_run_total : 0;
         info.textContent = `Body paragraphs: ${paraTotal}, runs: ${runTotal}. Heading styles: ${headings.length}. Special styles: ${specials.length}.`;
+      }
+
+      specialStylesCache = Array.isArray(specials) ? specials.slice() : [];
+      renderSpecialStyles(specialStylesCache);
+    }
+
+    function renderSpecialStyles(specials) {
+      const host = document.getElementById('specialStylesList');
+      if (!host) return;
+      host.innerHTML = '';
+      if (!Array.isArray(specials) || !specials.length) {
+        const empty = document.createElement('div');
+        empty.className = 'hint';
+        empty.textContent = 'No special inline styles (bold/italic/etc.) detected in the body.';
+        host.appendChild(empty);
+        return;
+      }
+      const sorted = specials.slice().sort((a, b) => {
+        const ca = typeof a.count_runs === 'number' ? a.count_runs : 0;
+        const cb = typeof b.count_runs === 'number' ? b.count_runs : 0;
+        return cb - ca;
+      });
+      for (const s of sorted) {
+        const name = s && s.name ? String(s.name) : '';
+        if (!name) continue;
+        const count = typeof s.count_runs === 'number' ? s.count_runs : 0;
+        const samples = Array.isArray(s.samples) ? s.samples : [];
+        const row = document.createElement('div');
+        row.className = 'inline spec-style-row';
+        row.setAttribute('data-style-name', name);
+
+        const label = document.createElement('label');
+        label.className = 'override';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.setAttribute('data-role', 'override');
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(` ${name} (${count})`));
+        row.appendChild(label);
+
+        const famLbl = document.createElement('label');
+        famLbl.textContent = ' Family';
+        const famInput = document.createElement('input');
+        famInput.type = 'text';
+        famInput.className = 'w-280';
+        famInput.setAttribute('data-role', 'family');
+        famLbl.appendChild(famInput);
+        row.appendChild(famLbl);
+
+        const sizeLbl = document.createElement('label');
+        sizeLbl.textContent = ' Size (pt)';
+        const sizeInput = document.createElement('input');
+        sizeInput.type = 'number';
+        sizeInput.min = '6';
+        sizeInput.max = '96';
+        sizeInput.step = '1';
+        sizeInput.className = 'w-120';
+        sizeInput.setAttribute('data-role', 'size');
+        sizeLbl.appendChild(sizeInput);
+        row.appendChild(sizeLbl);
+
+        const boldLbl = document.createElement('label');
+        const boldCb = document.createElement('input');
+        boldCb.type = 'checkbox';
+        boldCb.setAttribute('data-role', 'bold');
+        boldLbl.appendChild(boldCb);
+        boldLbl.appendChild(document.createTextNode(' Bold'));
+        row.appendChild(boldLbl);
+
+        const italicLbl = document.createElement('label');
+        const italicCb = document.createElement('input');
+        italicCb.type = 'checkbox';
+        italicCb.setAttribute('data-role', 'italic');
+        italicLbl.appendChild(italicCb);
+        italicLbl.appendChild(document.createTextNode(' Italic'));
+        row.appendChild(italicLbl);
+
+        if (samples.length) {
+          const sampleSpan = document.createElement('span');
+          sampleSpan.className = 'hint';
+          sampleSpan.textContent = ` e.g. "${samples[0]}"`;
+          row.appendChild(sampleSpan);
+        }
+
+        host.appendChild(row);
       }
     }
 
