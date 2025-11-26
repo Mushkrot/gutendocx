@@ -69,12 +69,19 @@
     .inline label { min-width: unset; }
     .w-280 { width: 280px; }
     .w-120 { width: 120px; }
-    .muted { opacity: 0.6; }
+    .muted { color: #888; }
+    .card.muted { background: #f3f3f3; }
+    /* Ensure special style rows align columns regardless of style name length */
+    .spec-style-row .override {
+      flex: 0 0 180px;
+      min-width: 180px;
+    }
     /* Emphasized Override control */
     .override { font-weight: 800; color: #111; display: inline-flex; align-items: center; gap: 10px; cursor: pointer; }
     .override input[type="checkbox"] { width: 28px; height: 28px; accent-color: #2563eb; cursor: pointer; }
-    /* Keep the Override control readable even when card is muted */
-    .card.muted .override { opacity: 1; }
+    /* Keep the Override control readable even when containers are muted */
+    .card.muted .override,
+    .spec-style-row.muted .override { opacity: 1; }
     .busy-backdrop { position: fixed; inset: 0; background: rgba(255,255,255,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; }
     .busy-box { display: flex; flex-direction: column; align-items: center; gap: 12px; color: #111; font-weight: 700; }
     .spinner { width: 48px; height: 48px; border: 4px solid #cfd8dc; border-top-color: #2563eb; border-radius: 50%; animation: spin 1s linear infinite; }
@@ -98,7 +105,10 @@
     <label for="inputPath">Input DOCX path</label>
     <input id="inputPath" type="text" value="Simples/test2.docx" />
     <select id="docPicker" style="margin-left:8px; min-width:240px;"></select>
+    <button id="btnUpload" style="margin-left:8px;">Upload files…</button>
+    <span id="batchInfo" class="hint" style="margin-left:8px; display:none;"></span>
   </div>
+  <input id="fileUpload" type="file" multiple webkitdirectory style="display:none;" />
   <div class="row row-flex">
     <div class="field">
       <label for="configPath">Config path (optional)</label>
@@ -329,6 +339,7 @@
     const SIZE_PRESETS = [10,11,12,13,14,16,18,20,22,24,26,28,30,32,36,40,44,48,56,64];
 
     let specialStylesCache = [];
+    let currentBatch = null;
 
     // Pricing per 1M tokens (approx, from user's table)
     const PRICES = {
@@ -456,9 +467,9 @@
     }
 
     function getPayload(opts = {}) {
-      const { forceDryRun = false, includeDryRun = true } = opts;
+      const { forceDryRun = false, includeDryRun = true, includeBatch = false } = opts;
       const styles = collectStyles();
-      return {
+      const payload = {
         input: $("inputPath").value.trim(),
         config_path: $("configPath").value.trim() || null,
         vision: $("vision").checked,
@@ -469,6 +480,13 @@
         ...(Object.keys(styles).length ? { styles } : {}),
         ...(includeDryRun ? { dry_run: !!forceDryRun } : {}),
       };
+      if (includeBatch && currentBatch && Array.isArray(currentBatch.files) && currentBatch.files.length) {
+        payload.batch_id = currentBatch.batch_id || null;
+        payload.batch_files = currentBatch.files
+          .map(f => f && f.rel_path)
+          .filter(p => typeof p === 'string' && p.trim().length > 0);
+      }
+      return payload;
     }
 
     function setBusy(on, text) {
@@ -571,6 +589,70 @@
     }
     loadDocxList();
 
+    function updateBatchInfo(data) {
+      const el = $("batchInfo");
+      if (!el) return;
+      if (!data || !Array.isArray(data.files) || !data.files.length) {
+        el.style.display = 'none';
+        el.textContent = '';
+        return;
+      }
+      const count = data.files.length;
+      el.style.display = '';
+      el.textContent = `Uploaded ${count} file(s)` + (data.batch_id ? ` (batch ${data.batch_id})` : '');
+    }
+
+    $("btnUpload").addEventListener('click', () => {
+      const inp = $("fileUpload");
+      if (!inp) return;
+      inp.value = "";
+      inp.click();
+    });
+
+    $("fileUpload").addEventListener('change', async (ev) => {
+      const inputEl = ev.target;
+      const files = Array.from(inputEl.files || []);
+      if (!files.length) return;
+
+      const fd = new FormData();
+      for (const f of files) {
+        const rel = f.webkitRelativePath || f.name;
+        const base = (rel.split(/[\\/]/).pop() || '').trim();
+        if (!base.toLowerCase().endsWith('.docx') || base.startsWith('~$')) continue;
+        fd.append('files', f, rel);
+      }
+
+      setBusy(true, 'Uploading files…');
+      setButtonsDisabled(true);
+      try {
+        const res = await fetch(api('/files/upload'), {
+          method: 'POST',
+          body: fd,
+        });
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(`HTTP ${res.status}: ${txt}`);
+        }
+        const data = await res.json();
+        currentBatch = data;
+
+        const first = (data.files && data.files[0]) || null;
+        if (first && first.rel_path) {
+          $("inputPath").value = first.rel_path;
+        }
+
+        updateBatchInfo(data);
+        showToast('success', `Uploaded ${(data.files || []).length} file(s)`);
+      } catch (e) {
+        currentBatch = null;
+        updateBatchInfo(null);
+        showToast('error', String(e));
+      } finally {
+        setBusy(false);
+        setButtonsDisabled(false);
+      }
+    });
+
     function updateWholeUi(json) {
       const sel = $("docStyles");
       if (!sel) return;
@@ -626,6 +708,14 @@
         host.appendChild(empty);
         return;
       }
+      // Capture current Body style UI values so specials can mirror them by default.
+      const bodyFamEl = document.getElementById('bodyFamily');
+      const bodySizeEl = document.getElementById('bodySize');
+      const bodyFam = bodyFamEl && bodyFamEl.value ? bodyFamEl.value.trim() : '';
+      const bodySizeVal = bodySizeEl ? parseFloat(bodySizeEl.value || '') : NaN;
+      const bodyOvEl = document.getElementById('ovBody');
+      const bodyOverrideOn = !!(bodyOvEl && bodyOvEl.checked);
+
       const sorted = specials.slice().sort((a, b) => {
         const ca = typeof a.count_runs === 'number' ? a.count_runs : 0;
         const cb = typeof b.count_runs === 'number' ? b.count_runs : 0;
@@ -645,6 +735,10 @@
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.setAttribute('data-role', 'override');
+        // If Body override is active, enable specials by default so they share Body settings.
+        if (bodyOverrideOn) {
+          cb.checked = true;
+        }
         label.appendChild(cb);
         label.appendChild(document.createTextNode(` ${name} (${count})`));
         row.appendChild(label);
@@ -655,6 +749,8 @@
         famInput.type = 'text';
         famInput.className = 'w-280';
         famInput.setAttribute('data-role', 'family');
+        // Default family to current Body family so visuals stay consistent.
+        if (bodyFam) famInput.value = bodyFam;
         famLbl.appendChild(famInput);
         row.appendChild(famLbl);
 
@@ -667,6 +763,10 @@
         sizeInput.step = '1';
         sizeInput.className = 'w-120';
         sizeInput.setAttribute('data-role', 'size');
+        // Default size to current Body size when available.
+        if (!Number.isNaN(bodySizeVal) && bodySizeVal > 0) {
+          sizeInput.value = String(bodySizeVal);
+        }
         sizeLbl.appendChild(sizeInput);
         row.appendChild(sizeLbl);
 
@@ -674,6 +774,10 @@
         const boldCb = document.createElement('input');
         boldCb.type = 'checkbox';
         boldCb.setAttribute('data-role', 'bold');
+        // Pre-check Bold if style name implies it.
+        if (name.toLowerCase().includes('bold')) {
+          boldCb.checked = true;
+        }
         boldLbl.appendChild(boldCb);
         boldLbl.appendChild(document.createTextNode(' Bold'));
         row.appendChild(boldLbl);
@@ -682,6 +786,10 @@
         const italicCb = document.createElement('input');
         italicCb.type = 'checkbox';
         italicCb.setAttribute('data-role', 'italic');
+        // Pre-check Italic if style name implies it.
+        if (name.toLowerCase().includes('italic')) {
+          italicCb.checked = true;
+        }
         italicLbl.appendChild(italicCb);
         italicLbl.appendChild(document.createTextNode(' Italic'));
         row.appendChild(italicLbl);
@@ -694,6 +802,17 @@
         }
 
         host.appendChild(row);
+
+        // Match Body behaviour: when override is off, dim and disable controls; when on, enable.
+        const applyEnabled = () => {
+          const enabled = !!cb.checked;
+          row.classList.toggle('muted', !enabled);
+          for (const el of row.querySelectorAll('[data-role]:not([data-role="override"])')) {
+            el.disabled = !enabled;
+          }
+        };
+        cb.addEventListener('change', applyEnabled);
+        applyEnabled();
       }
     }
 
@@ -827,7 +946,7 @@
     $("showAuthor").addEventListener('change', () => $("toggleOverlay").dispatchEvent(new Event('change')));
 
     $("btnAnalyze").addEventListener('click', async () => {
-      const payload = getPayload({ forceDryRun: true, includeDryRun: true });
+      const payload = getPayload({ forceDryRun: true, includeDryRun: true, includeBatch: false });
       const whole = $("scopeWhole") && $("scopeWhole").checked;
       const path = whole ? '/whole/analyze' : '/cover/analyze';
       $("output").value = `Running ${path}...`;
@@ -850,7 +969,7 @@
     });
 
     $("btnApply").addEventListener('click', async () => {
-      const payload = getPayload({ includeDryRun: false });
+      const payload = getPayload({ includeDryRun: false, includeBatch: true });
       const whole = $("scopeWhole") && $("scopeWhole").checked;
       const path = whole ? '/whole/apply' : '/cover/apply';
       $("output").value = `Running ${path}...`;

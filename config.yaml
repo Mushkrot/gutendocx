@@ -115,4 +115,4 @@ options:
   backup_originals: false
 output:
   dir: output
-  versioning: true
+  versioning: false

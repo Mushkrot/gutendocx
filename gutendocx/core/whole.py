@@ -637,7 +637,7 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
     out_cfg = (config or {}).get("output", {}) or {}
     out_dir = out_cfg.get("dir", "output")
     os.makedirs(out_dir, exist_ok=True)
-    versioning = bool(out_cfg.get("versioning", True))
+    versioning = bool(out_cfg.get("versioning", False))
     output_path = _ensure_output_path(out_dir, input_path, versioning=versioning)
     saved_path = loader.save(doc, output_path)
     cleanup_stats: Dict[str, Any] = {

@@ -1,8 +1,9 @@
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List
 import os
 import time
+import zipfile
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,6 +49,12 @@ except Exception:
     pass
 app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 
+UPLOADS_DIR = os.path.join(os.getcwd(), "Uploads")
+try:
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+except Exception:
+    pass
+
 
 def _build_download_meta(saved_path: Optional[str]) -> Optional[Dict[str, str]]:
     """Return download metadata if the saved file lives under OUTPUT_DIR."""
@@ -65,6 +72,123 @@ def _build_download_meta(saved_path: Optional[str]) -> Optional[Dict[str, str]]:
     return {
         "filename": os.path.basename(abs_path),
         "url": f"/output/{normalized}",
+    }
+
+
+def _build_batch_zip(items: List[Dict[str, str]], batch_id: Optional[str]) -> Optional[str]:
+    """Create a ZIP archive for a batch of processed DOCX files.
+
+    Each item must have keys:
+      - input_path: original input path (relative to project root)
+      - output_path: saved DOCX path on disk
+
+    When batch_id is provided and the corresponding Uploads/batch_id directory
+    exists, we preserve the original folder structure inside the ZIP by
+    computing paths relative to that directory.
+    """
+
+    if not items:
+        return None
+
+    name = batch_id or f"batch_{int(time.time())}"
+    zip_path = os.path.join(OUTPUT_DIR, f"{name}.zip")
+
+    batch_root: Optional[str] = None
+    if batch_id:
+        candidate = os.path.join(UPLOADS_DIR, batch_id)
+        if os.path.isdir(candidate):
+            batch_root = os.path.abspath(candidate)
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for it in items:
+            inp_rel = it.get("input_path")
+            out_path = it.get("output_path")
+            if not out_path:
+                continue
+            abs_out = os.path.abspath(out_path)
+            if not os.path.exists(abs_out):
+                continue
+            arcname = os.path.basename(abs_out)
+            if batch_root and inp_rel:
+                inp_abs = os.path.abspath(os.path.join(os.getcwd(), inp_rel))
+                try:
+                    rel_to_root = os.path.relpath(inp_abs, batch_root)
+                except Exception:
+                    rel_to_root = None
+                if rel_to_root and not rel_to_root.startswith(".."):
+                    rel_dir = os.path.dirname(rel_to_root)
+                    if rel_dir:
+                        arcname = os.path.join(rel_dir, os.path.basename(abs_out))
+            zf.write(abs_out, arcname.replace(os.sep, "/"))
+
+    return zip_path
+
+
+@app.post("/files/upload")
+async def upload_files(files: List[UploadFile] = File(...)) -> Dict[str, Any]:
+    """Upload one or more DOCX files (or folders) and store them under Uploads/.
+
+    The client is expected to send each file with its relative path as the
+    filename (e.g. using file.webkitRelativePath on the web). We preserve this
+    structure under a generated batch directory.
+    """
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded")
+
+    batch_id = f"batch_{int(time.time())}"
+    batch_dir = os.path.join(UPLOADS_DIR, batch_id)
+    os.makedirs(batch_dir, exist_ok=True)
+
+    saved: List[Dict[str, str]] = []
+
+    for f in files:
+        rel = f.filename or f.filename or "document.docx"
+        rel = rel.replace("\\", "/").strip("/")
+        base_name = os.path.basename(rel) or "document.docx"
+        # Skip Word lock/owner files (~$...) and any non-DOCX files entirely.
+        if base_name.startswith("~$") or not base_name.lower().endswith(".docx"):
+            try:
+                # Drain and close the stream so the server can reuse the connection safely.
+                while True:
+                    chunk = await f.read(1024 * 1024)
+                    if not chunk:
+                        break
+            finally:
+                await f.close()
+            continue
+
+        parts = [p for p in rel.split("/") if p and p not in (".", "..")]
+        if not parts:
+            parts = [base_name]
+        rel_clean = "/".join(parts)
+        dest = os.path.join(batch_dir, *rel_clean.split("/"))
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+
+        try:
+            with open(dest, "wb") as out:
+                while True:
+                    chunk = await f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+        finally:
+            await f.close()
+
+        rel_project = os.path.relpath(dest, os.getcwd()).replace(os.sep, "/")
+        rel_batch = os.path.relpath(dest, batch_dir).replace(os.sep, "/")
+        saved.append(
+            {
+                "name": os.path.basename(dest),
+                "rel_path": rel_project,
+                "batch_rel_path": rel_batch,
+            }
+        )
+
+    return {
+        "batch_id": batch_id,
+        "root": os.path.relpath(batch_dir, os.getcwd()).replace(os.sep, "/"),
+        "files": saved,
     }
 
 
@@ -95,6 +219,8 @@ class ApplyRequest(BaseModel):
     model: Optional[str] = None
     min_confidence: Optional[float] = None
     styles: Optional[Dict[str, Any]] = None
+    batch_files: Optional[List[str]] = None
+    batch_id: Optional[str] = None
 
 
 @app.get("/health")
@@ -239,6 +365,37 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
                 cfg["special_overrides"] = so_specials
         # Persist any changes coming from GUI (Body style, layout flags, etc.).
         save_config(cfg, req.config_path)
+
+        batch_files = [p for p in (req.batch_files or []) if p]
+        if batch_files:
+            results: List[Dict[str, Any]] = []
+            zip_items: List[Dict[str, str]] = []
+            for path in batch_files:
+                r = apply_whole_document(
+                    input_path=path,
+                    config=cfg,
+                )
+                results.append({"input_path": path, "result": r})
+                out_path = r.get("output_path")
+                if out_path:
+                    zip_items.append(
+                        {"input_path": path, "output_path": str(out_path)}
+                    )
+
+            zip_path = _build_batch_zip(zip_items, req.batch_id)
+            resp: Dict[str, Any] = {
+                "batch": {
+                    "id": req.batch_id,
+                    "count": len(batch_files),
+                    "items": results,
+                },
+                "output_path": zip_path,
+            }
+            download_meta = _build_download_meta(zip_path)
+            if download_meta:
+                resp["download"] = download_meta
+            return resp
+
         res = apply_whole_document(
             input_path=req.input,
             config=cfg,
@@ -301,6 +458,42 @@ def cover_apply(req: ApplyRequest) -> Dict[str, Any]:
             cfg["cover"] = c
         # Persist any changes coming from GUI (cover styles, vision params, etc.).
         save_config(cfg, req.config_path)
+
+        batch_files = [p for p in (req.batch_files or []) if p]
+        if batch_files:
+            results: List[Dict[str, Any]] = []
+            zip_items: List[Dict[str, str]] = []
+            out_dir = (cfg.get("output", {}) or {}).get("dir", "output")
+            for path in batch_files:
+                r = run_cover_pipeline(
+                    input_path=path,
+                    config=cfg,
+                    out_dir=out_dir,
+                    dry_run=False,
+                    no_layout=bool(req.no_layout),
+                    vision=bool(req.vision),
+                )
+                results.append({"input_path": path, "result": r})
+                out_path = r.get("output_path")
+                if out_path:
+                    zip_items.append(
+                        {"input_path": path, "output_path": str(out_path)}
+                    )
+
+            zip_path = _build_batch_zip(zip_items, req.batch_id)
+            resp: Dict[str, Any] = {
+                "batch": {
+                    "id": req.batch_id,
+                    "count": len(batch_files),
+                    "items": results,
+                },
+                "output_path": zip_path,
+            }
+            download_meta = _build_download_meta(zip_path)
+            if download_meta:
+                resp["download"] = download_meta
+            return resp
+
         res = run_cover_pipeline(
             input_path=req.input,
             config=cfg,

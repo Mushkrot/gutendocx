@@ -109,4 +109,4 @@ options:
 
 output:
   dir: "output"
-  versioning: true
+  versioning: false

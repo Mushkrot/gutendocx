@@ -466,7 +466,7 @@ def apply_cover_styles(doc: Document, detection: Dict[str, Any], config: Dict[st
     return {"changed": changed}
 
 
-def _ensure_output_path(out_dir: str, input_path: str, versioning: bool = True) -> str:
+def _ensure_output_path(out_dir: str, input_path: str, versioning: bool = False) -> str:
     base = os.path.splitext(os.path.basename(input_path))[0]
     candidate = os.path.join(out_dir, f"{base}.docx")
     if not versioning:
@@ -514,7 +514,7 @@ def run_cover_pipeline(input_path: str, config: Dict[str, Any], out_dir: str, dr
 
     os.makedirs(out_dir, exist_ok=True)
     out_cfg = (config or {}).get("output", {})
-    versioning = bool(out_cfg.get("versioning", True))
+    versioning = bool(out_cfg.get("versioning", False))
     out_path = _ensure_output_path(out_dir, input_path, versioning=versioning)
 
     saved_path = None
