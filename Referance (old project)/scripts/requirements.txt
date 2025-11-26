@@ -1,4 +1,0 @@
-pandas
-reportlab
-openpyxl
-requests

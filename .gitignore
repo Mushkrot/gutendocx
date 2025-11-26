@@ -23,3 +23,5 @@ htmlcov/
 # Project outputs
 gutendocx/out/
 reports/
+Uploads/
+output/
