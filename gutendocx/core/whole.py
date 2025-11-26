@@ -12,7 +12,6 @@ from .loader import Loader
 from .scan import _style_key, _style_name, _has_paragraph_overrides
 from .cover import _has_page_or_section_break, _ensure_output_path
 from .styles_xml import cleanup_styles_xml
-from .layout import ensure_update_fields_on_open
 
 
 def _compute_body_start_index(doc: Document) -> int:
@@ -634,8 +633,6 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
 
     body_overrides = _apply_body_style_overrides(doc, config)
     special_overrides = _apply_special_style_overrides(doc, config)
-
-    ensure_update_fields_on_open(doc, config)
 
     out_cfg = (config or {}).get("output", {}) or {}
     out_dir = out_cfg.get("dir", "output")

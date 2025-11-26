@@ -6,8 +6,6 @@ layout:
     show_numpages: false
   blank_page_after_cover: true
 
-  update_fields_on_open: true
-
 roles:
   Title: "Title"
   Subtitle: "Subtitle"

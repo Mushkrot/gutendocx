@@ -81,7 +81,6 @@ class AnalyzeRequest(BaseModel):
     vision: bool = True
     no_layout: bool = True
     dry_run: bool = True
-    update_fields_on_open: Optional[bool] = None
     config_path: Optional[str] = None
     model: Optional[str] = None
     min_confidence: Optional[float] = None
@@ -92,7 +91,6 @@ class ApplyRequest(BaseModel):
     input: str
     vision: bool = True
     no_layout: bool = True
-    update_fields_on_open: Optional[bool] = None
     config_path: Optional[str] = None
     model: Optional[str] = None
     min_confidence: Optional[float] = None
@@ -108,10 +106,6 @@ def health() -> Dict[str, Any]:
 def cover_analyze(req: AnalyzeRequest) -> Dict[str, Any]:
     try:
         cfg = load_config(req.config_path)
-        if req.update_fields_on_open is not None:
-            layout_cfg = (cfg.get("layout") or {}) or {}
-            layout_cfg["update_fields_on_open"] = bool(req.update_fields_on_open)
-            cfg["layout"] = layout_cfg
         if req.model:
             c = cfg.get("cover", {}) or {}
             v = c.get("vision", {}) or {}
@@ -161,10 +155,6 @@ def whole_analyze(req: AnalyzeRequest) -> Dict[str, Any]:
     """
     try:
         cfg = load_config(req.config_path)
-        if req.update_fields_on_open is not None:
-            layout_cfg = (cfg.get("layout") or {}) or {}
-            layout_cfg["update_fields_on_open"] = bool(req.update_fields_on_open)
-            cfg["layout"] = layout_cfg
         res = analyze_whole_document(
             input_path=req.input,
             config=cfg,
@@ -185,10 +175,6 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
     """
     try:
         cfg = load_config(req.config_path)
-        if req.update_fields_on_open is not None:
-            layout_cfg = (cfg.get("layout") or {}) or {}
-            layout_cfg["update_fields_on_open"] = bool(req.update_fields_on_open)
-            cfg["layout"] = layout_cfg
         # Centralized overrides for Body style coming from the UI.
         # These are merged into style_overrides.Body and persisted to
         # config.yaml so that subsequent runs reuse the same settings.
@@ -257,6 +243,7 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
             input_path=req.input,
             config=cfg,
         )
+
         download_meta = _build_download_meta(res.get("output_path"))
         if download_meta:
             res["download"] = download_meta
@@ -287,10 +274,6 @@ def list_simples() -> Dict[str, Any]:
 def cover_apply(req: ApplyRequest) -> Dict[str, Any]:
     try:
         cfg = load_config(req.config_path)
-        if req.update_fields_on_open is not None:
-            layout_cfg = (cfg.get("layout") or {}) or {}
-            layout_cfg["update_fields_on_open"] = bool(req.update_fields_on_open)
-            cfg["layout"] = layout_cfg
         if req.model:
             c = cfg.get("cover", {}) or {}
             v = c.get("vision", {}) or {}
@@ -326,6 +309,7 @@ def cover_apply(req: ApplyRequest) -> Dict[str, Any]:
             no_layout=bool(req.no_layout),
             vision=bool(req.vision),
         )
+
         download_meta = _build_download_meta(res.get("output_path"))
         if download_meta:
             res["download"] = download_meta
