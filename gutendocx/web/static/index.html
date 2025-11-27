@@ -291,6 +291,24 @@
           <div id="specialStylesList"></div>
         </div>
       </details>
+      <details>
+        <summary>Table of Contents</summary>
+        <div class="card" id="cardToc">
+          <div class="inline">
+            <label>Table of Contents</label>
+            <span class="hint">Generate or refresh a Word-style TOC based on heading styles.</span>
+          </div>
+          <div class="inline">
+            <label for="tocMode">Mode</label>
+            <select id="tocMode" class="w-280">
+              <option value="structured" selected>Structured (Heading 1–2)</option>
+              <option value="heuristic">Heuristic (chapter patterns)</option>
+              <option value="auto">Auto</option>
+            </select>
+            <button id="btnTocApply" class="primary-button secondary" style="margin-left:8px;">Apply TOC</button>
+          </div>
+        </div>
+      </details>
     </div>
   </div>
   <div class="row" id="previewRow" style="display:none;">
@@ -499,6 +517,7 @@
     function setButtonsDisabled(dis) {
       try { $("btnAnalyze").disabled = dis; } catch {}
       try { $("btnApply").disabled = dis; } catch {}
+      try { $("btnTocApply").disabled = dis; } catch {}
     }
 
     function showToast(kind, text, ms = 3500) {
@@ -987,6 +1006,42 @@
           showToast('success', `Saved: ${json.output_path}`);
         } else {
           showToast('success', 'Apply completed');
+        }
+      } catch (e) {
+        $("output").value = String(e);
+        showToast('error', String(e));
+      } finally {
+        setBusy(false);
+        setButtonsDisabled(false);
+      }
+    });
+
+    $("btnTocApply").addEventListener('click', async () => {
+      const input = $("inputPath").value.trim();
+      const configPath = $("configPath").value.trim() || null;
+      const modeSel = document.getElementById('tocMode');
+      const mode = (modeSel && modeSel.value) ? modeSel.value : 'structured';
+
+      const payload = {
+        input,
+        mode,
+        config_path: configPath,
+      };
+
+      $("output").value = 'Running /toc/apply...';
+      setBusy(true, 'Applying TOC…');
+      setButtonsDisabled(true);
+      updateDownloadUi(null);
+      try {
+        const json = await callApi('/toc/apply', payload);
+        $("output").value = JSON.stringify(json, null, 2);
+        if (json && json.download) {
+          updateDownloadUi(json.download);
+          showToast('success', 'TOC updated. File is ready for download');
+        } else if (json && json.output_path) {
+          showToast('success', `TOC updated. Saved: ${json.output_path}`);
+        } else {
+          showToast('success', 'TOC updated');
         }
       } catch (e) {
         $("output").value = String(e);

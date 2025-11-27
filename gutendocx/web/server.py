@@ -14,6 +14,8 @@ from gutendocx.core.config import load_config, save_config
 from gutendocx.core.cover import run_cover_pipeline
 from gutendocx.core.vision import detect_cover_roles_vision
 from gutendocx.core.whole import analyze_whole_document, apply_whole_document
+from gutendocx.core.toc import build_toc
+from gutendocx.core.libreoffice_toc import run_libreoffice_convert
 
 
 app = FastAPI(title="GutenDocx Web API", version="0.1.0")
@@ -223,6 +225,14 @@ class ApplyRequest(BaseModel):
     batch_id: Optional[str] = None
 
 
+class TocApplyRequest(BaseModel):
+    input: str
+    mode: Optional[str] = None
+    config_path: Optional[str] = None
+    soffice: Optional[str] = None
+    timeout: Optional[int] = None
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     return {"status": "ok", "time": int(time.time())}
@@ -266,6 +276,76 @@ def cover_analyze(req: AnalyzeRequest) -> Dict[str, Any]:
             no_layout=bool(req.no_layout),
             vision=bool(req.vision),
         )
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/toc/apply")
+def toc_apply(req: TocApplyRequest) -> Dict[str, Any]:
+    try:
+        cfg = load_config(req.config_path)
+        mode = req.mode or "structured"
+
+        # Step 1: build TOC and insert the field using GutenDocx.
+        toc_res = build_toc(input_path=req.input, config=cfg, mode=mode)
+        pre_lo_path = toc_res.get("output_path")
+        if not pre_lo_path:
+            raise HTTPException(status_code=500, detail="build_toc did not produce an output file")
+
+        # Step 2: let LibreOffice recalculate fields/TOC server-side.
+        toc_cfg = (cfg.get("toc", {}) or {})
+        lo_cfg = (toc_cfg.get("libreoffice", {}) or {})
+
+        soffice_bin = req.soffice or lo_cfg.get("binary") or "soffice"
+        timeout = int(req.timeout or lo_cfg.get("timeout", 120))
+        use_docker = bool(lo_cfg.get("use_docker", True))
+
+        out_cfg = (cfg.get("output", {}) or {})
+        base_out = out_cfg.get("dir") or "output"
+        lo_dir = lo_cfg.get("dir") or os.path.join(base_out, lo_cfg.get("subdir", "lo_toc"))
+
+        lo_res = run_libreoffice_convert(
+            pre_lo_path,
+            soffice=soffice_bin,
+            out_dir=lo_dir,
+            timeout=timeout,
+            use_docker=use_docker,
+        )
+
+        if not lo_res.get("ok"):
+            # Surface LibreOffice error to the client, but also include raw result for debugging.
+            err = lo_res.get("error") or f"LibreOffice failed with code {lo_res.get('returncode')}"
+            raise HTTPException(status_code=500, detail=f"LibreOffice TOC update failed: {err}")
+
+        final_path = lo_res.get("output_path") or pre_lo_path
+
+        res: Dict[str, Any] = {
+            "toc": toc_res.get("toc"),
+            "pre_libreoffice_output_path": pre_lo_path,
+            "output_path": final_path,
+            "libreoffice": {
+                "ok": lo_res.get("ok"),
+                "returncode": lo_res.get("returncode"),
+                "stdout": lo_res.get("stdout"),
+                "stderr": lo_res.get("stderr"),
+                "command": lo_res.get("command"),
+            },
+        }
+
+        # Primary download: updated DOCX with TOC.
+        download_meta = _build_download_meta(final_path)
+        if download_meta:
+            res["download"] = download_meta
+
+        # Optional secondary download: PDF produced by LibreOffice macro.
+        pdf_path = lo_res.get("pdf_output_path")
+        if pdf_path:
+            res["pdf_output_path"] = pdf_path
+            pdf_download = _build_download_meta(pdf_path)
+            if pdf_download:
+                res["pdf_download"] = pdf_download
+
         return res
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
