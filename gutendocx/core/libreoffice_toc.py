@@ -3,24 +3,30 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import uuid
+import time
 from typing import Any, Dict, Optional
 
 
 def run_libreoffice_convert(
-
     input_path: str,
     soffice: str = "soffice",
     out_dir: Optional[str] = None,
     timeout: int = 120,
     use_docker: bool = False,
 ) -> Dict[str, Any]:
-    """Convert a DOCX via LibreOffice in headless mode (DOCX -> DOCX).
+    """Convert a DOCX via LibreOffice in headless mode (DOCX -> DOCX + PDF).
 
     When use_docker is False, LibreOffice is invoked directly on the host
-    using the "--convert-to docx" CLI. When use_docker is True, the
-    linuxserver/libreoffice Docker image is used and a pre-installed Basic
-    macro (Standard.Module1.UpdateTocAndExport) is called to update TOC and
-    export a PDF alongside the DOCX.
+    using the "--convert-to docx" CLI.
+    
+    When use_docker is True, the linuxserver/libreoffice Docker image is used.
+    We use a 'pipe-exec-pipe' strategy to avoid volume mount and docker cp issues:
+      1. Start a detached container.
+      2. Pipe input DOCX and script into container using 'docker exec -i ... tee'.
+      3. Exec the script inside the container (via UNO).
+      4. Read the result (DOCX + PDF) via 'docker exec ... cat' -> local file.
+      5. Remove the container.
     """
 
     abs_input = os.path.abspath(input_path)
@@ -37,49 +43,133 @@ def run_libreoffice_convert(
 
     project_root = os.path.abspath(os.getcwd())
 
-    if use_docker:
-        # Persist LibreOffice user profile (including macros) under
-        # <project_root>/.config-libreoffice and mount it as /config.
-        config_dir = os.path.join(project_root, ".config-libreoffice")
-        try:
-            os.makedirs(config_dir, exist_ok=True)
-        except Exception:
-            # Best-effort; if it fails, Docker will simply get an empty /config.
-            pass
+    docx_output_path = os.path.join(abs_out_dir, f"{base_root}.docx")
+    pdf_output_path = os.path.join(abs_out_dir, f"{base_root}.pdf")
 
-        # Copy the input DOCX into /config/input.docx so that the macro,
-        # which is hard-coded to use that path, can open/update/export it.
-        config_input = os.path.join(config_dir, "input.docx")
-        config_pdf = os.path.join(config_dir, "input.pdf")
-        try:
-            shutil.copy2(abs_input, config_input)
-            if os.path.exists(config_pdf):
-                os.remove(config_pdf)
-        except Exception as e:
+    if use_docker:
+        # PyUNO script path on host
+        script_path = os.path.join(project_root, "gutendocx", "scripts", "lo_convert.py")
+        if not os.path.isfile(script_path):
             return {
                 "ok": False,
-                "error": f"Failed to prepare DOCX for LibreOffice in {config_dir}: {e}",
+                "error": f"PyUNO script not found at {script_path}",
                 "command": None,
             }
 
-        cmd = [
-            "docker",
-            "run",
-            "--rm",
-            "-v",
-            f"{project_root}:/data",
-            "-v",
-            f"{config_dir}:/config",
-            "-w",
-            "/data",
-            "lscr.io/linuxserver/libreoffice:latest",
-            soffice,
-            "--headless",
-            "--invisible",
-            "macro:///Standard.Module1.UpdateTocAndExport",
+        container_name = f"lo_worker_{uuid.uuid4().hex}"
+        
+        # 1. Start container
+        run_cmd = [
+            "docker", "run", "-d", "--rm",
+            "--name", container_name,
+            "lscr.io/linuxserver/libreoffice:latest"
         ]
+        
+        try:
+            subprocess.run(run_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except subprocess.CalledProcessError as e:
+            return {
+                "ok": False,
+                "error": f"Failed to start Docker container: {e.stderr.decode()}",
+                "command": run_cmd
+            }
+
+        container_running = True
+        stdout_log = ""
+        stderr_log = ""
+        
+        try:
+            # Give it a moment to initialize services
+            time.sleep(5)
+
+            # 2. Pipe files to container
+            remote_script = "/tmp/lo_convert.py"
+            remote_input = "/tmp/input.docx"
+            remote_output_pdf = "/tmp/output.pdf"
+            
+            # Helper to pipe file content
+            def pipe_to_container(local_path, remote_path):
+                with open(local_path, "rb") as f_in:
+                    # docker exec -i CONTAINER tee REMOTE_PATH > /dev/null
+                    cmd = ["docker", "exec", "-i", container_name, "tee", remote_path]
+                    subprocess.run(cmd, stdin=f_in, stdout=subprocess.DEVNULL, check=True)
+
+            pipe_to_container(script_path, remote_script)
+            pipe_to_container(abs_input, remote_input)
+
+            # 3. Exec command
+            # Start soffice background (listening on port 2002), wait, run python
+            exec_cmd_str = (
+                f"soffice --headless --accept='socket,host=localhost,port=2002;urp;' > /dev/null 2>&1 & "
+                f"sleep 5 && "
+                f"python3 {remote_script} {remote_input} {remote_output_pdf}"
+            )
+            
+            exec_cmd = [
+                "docker", "exec", container_name,
+                "/bin/bash", "-c", exec_cmd_str
+            ]
+            
+            proc = subprocess.run(
+                exec_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout
+            )
+            
+            stdout_log = proc.stdout.decode("utf-8", errors="ignore")
+            stderr_log = proc.stderr.decode("utf-8", errors="ignore")
+            
+            if proc.returncode == 0:
+                # 4. Read results back
+                # Helper to read file content from container
+                def read_from_container(remote_path, local_path):
+                    with open(local_path, "wb") as f_out:
+                        # docker exec CONTAINER cat REMOTE_PATH
+                        cmd = ["docker", "exec", container_name, "cat", remote_path]
+                        subprocess.run(cmd, stdout=f_out, check=True)
+
+                # Read DOCX
+                read_from_container(remote_input, docx_output_path)
+                
+                # Read PDF
+                read_from_container(remote_output_pdf, pdf_output_path)
+            else:
+                pass
+
+            return_code = proc.returncode
+
+        except subprocess.TimeoutExpired:
+            return_code = -1
+            stderr_log += f"\nOperation timed out after {timeout}s"
+        except Exception as e:
+            return_code = 1
+            stderr_log += f"\nException during Docker operation: {e}"
+        finally:
+            # 5. Cleanup
+            if container_running:
+                subprocess.run(
+                    ["docker", "kill", container_name],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False
+                )
+
+        docx_exists = os.path.isfile(docx_output_path)
+        pdf_exists = os.path.isfile(pdf_output_path)
+
+        return {
+            "ok": return_code == 0 and docx_exists and pdf_exists,
+            "returncode": return_code,
+            "stdout": stdout_log,
+            "stderr": stderr_log,
+            "output_path": docx_output_path if docx_exists else None,
+            "pdf_output_path": pdf_output_path if pdf_exists else None,
+            "command": exec_cmd if 'exec_cmd' in locals() else run_cmd,
+        }
+
     else:
-        # Host-mode fallback: keep the old --convert-to docx behaviour.
+        # Host-mode fallback
         cmd = [
             soffice,
             "--headless",
@@ -90,66 +180,46 @@ def run_libreoffice_convert(
             abs_input,
         ]
 
-    try:
-        proc = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=timeout,
-            check=False,
-        )
-    except FileNotFoundError as e:
-        binary = "docker" if use_docker else soffice
-        return {
-            "ok": False,
-            "error": f"{binary} binary not found: {e}",
-            "command": cmd,
-        }
-    except subprocess.TimeoutExpired as e:
-        return {
-            "ok": False,
-            "error": f"LibreOffice timed out after {timeout}s: {e}",
-            "command": cmd,
-        }
-
-    stdout = proc.stdout.decode("utf-8", errors="ignore") if proc.stdout else ""
-    stderr = proc.stderr.decode("utf-8", errors="ignore") if proc.stderr else ""
-
-    if use_docker:
-        # In Docker mode the macro writes results to /config/input.docx/.pdf.
-        config_dir = os.path.join(project_root, ".config-libreoffice")
-        src_docx = os.path.join(config_dir, "input.docx")
-        src_pdf = os.path.join(config_dir, "input.pdf")
-        target_docx = os.path.join(abs_out_dir, f"{base_root}.docx")
-        target_pdf = os.path.join(abs_out_dir, f"{base_root}.pdf")
         try:
-            if os.path.isfile(src_docx):
-                os.makedirs(abs_out_dir, exist_ok=True)
-                shutil.copy2(src_docx, target_docx)
-            if os.path.isfile(src_pdf):
-                os.makedirs(abs_out_dir, exist_ok=True)
-                shutil.copy2(src_pdf, target_pdf)
-        except Exception as e:
-            extra = f"[run_libreoffice_convert] Failed to copy results from {config_dir}: {e}"
-            stderr = (stderr + "\n" + extra).strip()
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout,
+                check=False,
+            )
+        except FileNotFoundError as e:
+            return {
+                "ok": False,
+                "error": f"{soffice} binary not found: {e}",
+                "command": cmd,
+            }
+        except subprocess.TimeoutExpired as e:
+            return {
+                "ok": False,
+                "error": f"LibreOffice timed out after {timeout}s: {e}",
+                "command": cmd,
+            }
 
-    docx_path = os.path.join(abs_out_dir, f"{base_root}.docx")
-    pdf_path = os.path.join(abs_out_dir, f"{base_root}.pdf")
+        stdout = proc.stdout.decode("utf-8", errors="ignore") if proc.stdout else ""
+        stderr = proc.stderr.decode("utf-8", errors="ignore") if proc.stderr else ""
 
-    docx_exists = os.path.isfile(docx_path)
-    pdf_exists = os.path.isfile(pdf_path)
-    if not pdf_exists:
-        alt_pdf = os.path.join(abs_out_dir, f"{base_root}.PDF")
-        if os.path.isfile(alt_pdf):
-            pdf_path = alt_pdf
-            pdf_exists = True
+        docx_exists = os.path.isfile(docx_output_path)
+        
+        # Check for PDF
+        pdf_exists = os.path.isfile(pdf_output_path)
+        if not pdf_exists:
+            alt_pdf = os.path.join(abs_out_dir, f"{base_root}.PDF")
+            if os.path.isfile(alt_pdf):
+                pdf_output_path = alt_pdf
+                pdf_exists = True
 
-    return {
-        "ok": proc.returncode == 0 and docx_exists,
-        "returncode": proc.returncode,
-        "stdout": stdout,
-        "stderr": stderr,
-        "output_path": docx_path if docx_exists else None,
-        "pdf_output_path": pdf_path if pdf_exists else None,
-        "command": cmd,
-    }
+        return {
+            "ok": proc.returncode == 0 and docx_exists,
+            "returncode": proc.returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+            "output_path": docx_output_path if docx_exists else None,
+            "pdf_output_path": pdf_output_path if pdf_exists else None,
+            "command": cmd,
+        }
