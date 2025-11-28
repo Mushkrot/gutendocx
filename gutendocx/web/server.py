@@ -223,6 +223,8 @@ class ApplyRequest(BaseModel):
     styles: Optional[Dict[str, Any]] = None
     batch_files: Optional[List[str]] = None
     batch_id: Optional[str] = None
+    update_toc: bool = False
+    toc_mode: Optional[str] = None
 
 
 class TocApplyRequest(BaseModel):
@@ -231,6 +233,8 @@ class TocApplyRequest(BaseModel):
     config_path: Optional[str] = None
     soffice: Optional[str] = None
     timeout: Optional[int] = None
+    batch_files: Optional[List[str]] = None
+    batch_id: Optional[str] = None
 
 
 @app.get("/health")
@@ -283,27 +287,82 @@ def cover_analyze(req: AnalyzeRequest) -> Dict[str, Any]:
 
 @app.post("/toc/apply")
 def toc_apply(req: TocApplyRequest) -> Dict[str, Any]:
+    """Apply TOC (Table of Contents) to one or more files."""
+    print(f"DEBUG: toc_apply called. input={req.input}, batch_files={req.batch_files}")
     try:
         cfg = load_config(req.config_path)
         mode = req.mode or "structured"
 
-        # Step 1: build TOC and insert the field using GutenDocx.
+        # LibreOffice settings
+        toc_cfg = (cfg.get("toc", {}) or {})
+        lo_cfg = (toc_cfg.get("libreoffice", {}) or {})
+        soffice_bin = req.soffice or lo_cfg.get("binary") or "soffice"
+        timeout = int(req.timeout or lo_cfg.get("timeout", 120))
+        use_docker = bool(lo_cfg.get("use_docker", True))
+        out_cfg = (cfg.get("output", {}) or {})
+        base_out = out_cfg.get("dir") or "output"
+        lo_dir = lo_cfg.get("dir") or os.path.join(base_out, lo_cfg.get("subdir", "lo_toc"))
+
+        def process_single_toc(input_path: str) -> Dict[str, Any]:
+            """Process TOC for a single file."""
+            toc_res = build_toc(input_path=input_path, config=cfg, mode=mode)
+            pre_lo_path = toc_res.get("output_path")
+            if not pre_lo_path:
+                return {"error": "build_toc did not produce an output file", "input_path": input_path}
+
+            print(f"DEBUG toc_apply: calling run_libreoffice_convert for {input_path}")
+            lo_res = run_libreoffice_convert(
+                pre_lo_path,
+                soffice=soffice_bin,
+                out_dir=lo_dir,
+                timeout=timeout,
+                use_docker=use_docker,
+            )
+
+            final_path = lo_res.get("output_path") or pre_lo_path
+            result: Dict[str, Any] = {
+                "toc": toc_res.get("toc"),
+                "pre_libreoffice_output_path": pre_lo_path,
+                "output_path": final_path,
+                "libreoffice_ok": lo_res.get("ok"),
+            }
+            if not lo_res.get("ok"):
+                result["toc_error"] = lo_res.get("error") or lo_res.get("stderr")
+            return result
+
+        # Batch mode
+        batch_files = [p for p in (req.batch_files or []) if p]
+        if batch_files:
+            results: List[Dict[str, Any]] = []
+            zip_items: List[Dict[str, str]] = []
+
+            for path in batch_files:
+                print(f"DEBUG toc_apply batch: processing {path}")
+                r = process_single_toc(path)
+                results.append({"input_path": path, "result": r})
+                out_path = r.get("output_path")
+                if out_path and os.path.isfile(out_path):
+                    zip_items.append({"input_path": path, "output_path": str(out_path)})
+
+            zip_path = _build_batch_zip(zip_items, req.batch_id)
+            resp: Dict[str, Any] = {
+                "batch": {
+                    "id": req.batch_id,
+                    "count": len(batch_files),
+                    "items": results,
+                },
+                "output_path": zip_path,
+            }
+            download_meta = _build_download_meta(zip_path)
+            if download_meta:
+                resp["download"] = download_meta
+            return resp
+
+        # Single file mode
         toc_res = build_toc(input_path=req.input, config=cfg, mode=mode)
         pre_lo_path = toc_res.get("output_path")
         if not pre_lo_path:
             raise HTTPException(status_code=500, detail="build_toc did not produce an output file")
-
-        # Step 2: let LibreOffice recalculate fields/TOC server-side.
-        toc_cfg = (cfg.get("toc", {}) or {})
-        lo_cfg = (toc_cfg.get("libreoffice", {}) or {})
-
-        soffice_bin = req.soffice or lo_cfg.get("binary") or "soffice"
-        timeout = int(req.timeout or lo_cfg.get("timeout", 120))
-        use_docker = bool(lo_cfg.get("use_docker", True))
-
-        out_cfg = (cfg.get("output", {}) or {})
-        base_out = out_cfg.get("dir") or "output"
-        lo_dir = lo_cfg.get("dir") or os.path.join(base_out, lo_cfg.get("subdir", "lo_toc"))
 
         lo_res = run_libreoffice_convert(
             pre_lo_path,
@@ -314,7 +373,6 @@ def toc_apply(req: TocApplyRequest) -> Dict[str, Any]:
         )
 
         if not lo_res.get("ok"):
-            # Surface LibreOffice error to the client, but also include raw result for debugging.
             err = lo_res.get("error") or f"LibreOffice failed with code {lo_res.get('returncode')}"
             raise HTTPException(status_code=500, detail=f"LibreOffice TOC update failed: {err}")
 
@@ -333,12 +391,10 @@ def toc_apply(req: TocApplyRequest) -> Dict[str, Any]:
             },
         }
 
-        # Primary download: updated DOCX with TOC.
         download_meta = _build_download_meta(final_path)
         if download_meta:
             res["download"] = download_meta
 
-        # Optional secondary download: PDF produced by LibreOffice macro.
         pdf_path = lo_res.get("pdf_output_path")
         if pdf_path:
             res["pdf_output_path"] = pdf_path
@@ -372,13 +428,8 @@ def whole_analyze(req: AnalyzeRequest) -> Dict[str, Any]:
 
 @app.post("/whole/apply")
 def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
-    """Apply whole-document normalization to the body (beyond the cover).
-
-    This endpoint collapses non-protected paragraph styles in the body to
-    Normal and maps special run-level formatting combinations (bold/italic
-    etc.) to named character styles. It does not touch cover layout, TOC,
-    headers, or footers.
-    """
+    """Apply whole-document normalization to the body (beyond the cover)."""
+    print(f"DEBUG: whole_apply called. update_toc={req.update_toc}, input={req.input}")
     try:
         cfg = load_config(req.config_path)
         # Centralized overrides for Body style coming from the UI.
@@ -450,11 +501,50 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
         if batch_files:
             results: List[Dict[str, Any]] = []
             zip_items: List[Dict[str, str]] = []
+            
+            # Prepare TOC settings if needed
+            toc_mode = req.toc_mode or "structured"
+            toc_cfg = (cfg.get("toc", {}) or {})
+            lo_cfg = (toc_cfg.get("libreoffice", {}) or {})
+            soffice_bin = lo_cfg.get("binary") or "soffice"
+            timeout = int(lo_cfg.get("timeout", 120))
+            use_docker = bool(lo_cfg.get("use_docker", True))
+            out_cfg = (cfg.get("output", {}) or {})
+            base_out = out_cfg.get("dir") or "output"
+            
             for path in batch_files:
                 r = apply_whole_document(
                     input_path=path,
                     config=cfg,
                 )
+                
+                # Chained TOC update for each file in batch
+                if req.update_toc:
+                    styled_path = r.get("output_path")
+                    if styled_path and os.path.isfile(styled_path):
+                        try:
+                            print(f"DEBUG batch TOC: processing {path}")
+                            toc_res = build_toc(input_path=styled_path, config=cfg, mode=toc_mode)
+                            pre_lo_path = toc_res.get("output_path")
+                            if pre_lo_path:
+                                lo_res = run_libreoffice_convert(
+                                    pre_lo_path,
+                                    soffice=soffice_bin,
+                                    out_dir=base_out,
+                                    timeout=timeout,
+                                    use_docker=use_docker,
+                                )
+                                if lo_res.get("ok"):
+                                    final_path = lo_res.get("output_path")
+                                    if final_path:
+                                        r["output_path"] = final_path
+                                        r["toc_updated"] = True
+                                else:
+                                    r["toc_error"] = lo_res.get("error") or lo_res.get("stderr")
+                        except Exception as e:
+                            print(f"DEBUG batch TOC error: {e}")
+                            r["toc_error"] = str(e)
+                
                 results.append({"input_path": path, "result": r})
                 out_path = r.get("output_path")
                 if out_path:
@@ -470,6 +560,7 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
                     "items": results,
                 },
                 "output_path": zip_path,
+                "debug": {"update_toc": req.update_toc},
             }
             download_meta = _build_download_meta(zip_path)
             if download_meta:
@@ -481,9 +572,68 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
             config=cfg,
         )
 
+        # Optional chained TOC update
+        if req.update_toc:
+            print("DEBUG: Entering chained TOC update block")
+            style_out_path = res.get("output_path")
+            print(f"DEBUG: style_out_path={style_out_path}")
+            if style_out_path and os.path.isfile(style_out_path):
+                try:
+                    mode = req.toc_mode or "structured"
+                    print(f"DEBUG: calling build_toc mode={mode}")
+                    
+                    # 1. Build/Insert TOC fields in the newly styled doc
+                    toc_res = build_toc(input_path=style_out_path, config=cfg, mode=mode)
+                    pre_lo_path = toc_res.get("output_path")
+                    print(f"DEBUG: build_toc result path={pre_lo_path}")
+                    
+                    if pre_lo_path:
+                        # 2. Update via LibreOffice
+                        toc_cfg = (cfg.get("toc", {}) or {})
+                        lo_cfg = (toc_cfg.get("libreoffice", {}) or {})
+                        
+                        soffice_bin = lo_cfg.get("binary") or "soffice"
+                        timeout = int(lo_cfg.get("timeout", 120))
+                        use_docker = bool(lo_cfg.get("use_docker", True))
+                        
+                        print(f"DEBUG: calling run_libreoffice_convert use_docker={use_docker}")
+                        
+                        out_cfg = (cfg.get("output", {}) or {})
+                        base_out = out_cfg.get("dir") or "output"
+                        # We use the same base output dir to keep it simple for the user download
+                        lo_dir = base_out 
+                        
+                        lo_res = run_libreoffice_convert(
+                            pre_lo_path,
+                            soffice=soffice_bin,
+                            out_dir=lo_dir,
+                            timeout=timeout,
+                            use_docker=use_docker,
+                        )
+                        
+                        print(f"DEBUG: run_libreoffice_convert result: ok={lo_res.get('ok')}")
+                        if lo_res.get("ok"):
+                            final_path = lo_res.get("output_path")
+                            if final_path:
+                                res["output_path"] = final_path
+                                res["toc_updated"] = True
+                                # Include PDF result if available
+                                pdf_path = lo_res.get("pdf_output_path")
+                                if pdf_path:
+                                    res["pdf_output_path"] = pdf_path
+                                    pdf_download = _build_download_meta(pdf_path)
+                                    if pdf_download:
+                                        res["pdf_download"] = pdf_download
+                        else:
+                            res["toc_error"] = lo_res.get("error") or lo_res.get("stderr")
+                except Exception as e:
+                    print(f"DEBUG: Exception in chained TOC: {e}")
+                    res["toc_error"] = str(e)
+
         download_meta = _build_download_meta(res.get("output_path"))
         if download_meta:
             res["download"] = download_meta
+        res["debug"] = {"update_toc": req.update_toc, "toc_updated": res.get("toc_updated")}
         return res
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

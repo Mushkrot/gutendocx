@@ -282,6 +282,18 @@
             <label><input id="bodyBold" type="checkbox" /> Bold</label>
             <label><input id="bodyItalic" type="checkbox" /> Italic</label>
           </div>
+          <div style="margin-top:8px; padding-top:8px; border-top:1px dashed #ddd;">
+            <div class="inline">
+              <label style="font-weight:600; color:#2563eb;"><input id="autoUpdateToc" type="checkbox" checked /> Update TOC after applying styles</label>
+              <label for="tocMode" style="margin-left:16px;">Mode</label>
+              <select id="tocMode" class="w-200">
+                <option value="structured" selected>Structured (Heading 1–2)</option>
+                <option value="heuristic">Heuristic (chapter patterns)</option>
+                <option value="auto">Auto</option>
+              </select>
+            </div>
+            <span class="hint">Automatically rebuild and update Table of Contents (via LibreOffice) on the styled document.</span>
+          </div>
         </div>
         <div class="card" id="cardSpecials">
           <div class="inline">
@@ -296,16 +308,10 @@
         <div class="card" id="cardToc">
           <div class="inline">
             <label>Table of Contents</label>
-            <span class="hint">Generate or refresh a Word-style TOC based on heading styles.</span>
+            <span class="hint">Generate or refresh a Word-style TOC based on heading styles. Uses mode selected above.</span>
           </div>
           <div class="inline">
-            <label for="tocMode">Mode</label>
-            <select id="tocMode" class="w-280">
-              <option value="structured" selected>Structured (Heading 1–2)</option>
-              <option value="heuristic">Heuristic (chapter patterns)</option>
-              <option value="auto">Auto</option>
-            </select>
-            <button id="btnTocApply" class="primary-button secondary" style="margin-left:8px;">Apply TOC</button>
+            <button id="btnTocApply" class="primary-button secondary">Apply TOC</button>
           </div>
         </div>
       </details>
@@ -498,6 +504,18 @@
         ...(Object.keys(styles).length ? { styles } : {}),
         ...(includeDryRun ? { dry_run: !!forceDryRun } : {}),
       };
+      
+      // Check TOC update checkbox
+      const tocCheckbox = $("autoUpdateToc");
+      console.log("DEBUG getPayload: tocCheckbox=", tocCheckbox, "checked=", tocCheckbox?.checked, "scope=", payload.scope);
+      if (tocCheckbox && tocCheckbox.checked && payload.scope === "whole") {
+        payload.update_toc = true;
+        console.log("DEBUG getPayload: setting update_toc=true");
+        const tocMode = document.getElementById("tocMode");
+        if (tocMode && tocMode.value) {
+          payload.toc_mode = tocMode.value;
+        }
+      }
       if (includeBatch && currentBatch && Array.isArray(currentBatch.files) && currentBatch.files.length) {
         payload.batch_id = currentBatch.batch_id || null;
         payload.batch_files = currentBatch.files
@@ -989,6 +1007,7 @@
 
     $("btnApply").addEventListener('click', async () => {
       const payload = getPayload({ includeDryRun: false, includeBatch: true });
+      console.log("DEBUG btnApply payload:", JSON.stringify(payload));
       const whole = $("scopeWhole") && $("scopeWhole").checked;
       const path = whole ? '/whole/apply' : '/cover/apply';
       $("output").value = `Running ${path}...`;
@@ -1027,6 +1046,15 @@
         mode,
         config_path: configPath,
       };
+
+      // Add batch support (same as Apply button)
+      if (currentBatch && Array.isArray(currentBatch.files) && currentBatch.files.length) {
+        payload.batch_id = currentBatch.batch_id || null;
+        payload.batch_files = currentBatch.files
+          .map(f => f && f.rel_path)
+          .filter(p => typeof p === 'string' && p.trim().length > 0);
+      }
+      console.log("DEBUG btnTocApply payload:", JSON.stringify(payload));
 
       $("output").value = 'Running /toc/apply...';
       setBusy(true, 'Applying TOC…');

@@ -10,28 +10,65 @@ from docx.shared import Pt
 
 from .loader import Loader
 from .scan import _style_key, _style_name, _has_paragraph_overrides
-from .cover import _has_page_or_section_break, _ensure_output_path
+from .cover import _ensure_output_path
 from .styles_xml import cleanup_styles_xml
 
 
-def _compute_body_start_index(doc: Document) -> int:
-    """Return index of the first body paragraph (after the cover block).
-
-    The cover block is defined as all paragraphs from the start of the
-    document up to and including the first paragraph that contains a page
-    or section break, reusing the same heuristic as the cover pipeline.
-    If no such break is found, the whole document is treated as body.
+def _has_explicit_page_break(p) -> bool:
+    """Check for EXPLICIT page or section breaks only.
+    
+    Unlike _has_page_or_section_break in cover.py, this does NOT count
+    lastRenderedPageBreak, which is just a rendering marker, not an actual break.
     """
-    cover_indices: List[int] = []
-    found_break = False
+    el = p._element
+    try:
+        # Explicit page break: <w:br w:type="page"/>
+        if el.xpath('.//w:br[@w:type="page"]'):
+            return True
+        # Section break in paragraph properties
+        if el.xpath('./w:pPr/w:sectPr'):
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _compute_body_start_index(doc: Document) -> int:
+    """Return index of the first body paragraph (after the cover + blank page).
+
+    The document structure is expected to be:
+      - Page 1: Cover (Title, Subtitle, Author) ending with a page/section break
+      - Page 2: Blank page ending with a page/section break  
+      - Page 3+: Body text (starts here)
+    
+    We need to find TWO page/section breaks. The body starts after the second break.
+    If only one break is found, body starts after that break.
+    If no break is found, the whole document is treated as body (index 0).
+    """
+    break_indices: list[int] = []
+    
     for idx, p in enumerate(doc.paragraphs):
-        cover_indices.append(idx)
-        if _has_page_or_section_break(p):
-            found_break = True
-            break
-    if cover_indices and found_break:
-        last_cover = max(cover_indices)
-        return min(last_cover + 1, len(doc.paragraphs))
+        # Use explicit page break check (not lastRenderedPageBreak)
+        if _has_explicit_page_break(p):
+            break_indices.append(idx)
+            # Stop after finding 2 breaks
+            if len(break_indices) >= 2:
+                break
+    
+    print(f"DEBUG _compute_body_start_index: found {len(break_indices)} EXPLICIT breaks at indices {break_indices}")
+    
+    if len(break_indices) >= 2:
+        # Body starts after the SECOND break
+        body_start = break_indices[1] + 1
+        print(f"DEBUG: Using second break. body_start={body_start}")
+        return min(body_start, len(doc.paragraphs))
+    elif len(break_indices) == 1:
+        # Only one break found - body starts after it
+        body_start = break_indices[0] + 1
+        print(f"DEBUG: Only one break found. body_start={body_start}")
+        return min(body_start, len(doc.paragraphs))
+    
+    print("DEBUG: No breaks found, treating whole document as body")
     return 0
 
 
@@ -491,10 +528,25 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
         "Footer",
     }
 
+    # Get body style name from config (default "GD Body", NOT "Normal")
+    # This ensures we don't modify Normal which would affect Cover styles
+    roles_cfg = (config or {}).get("roles", {}) or {}
+    body_style_name = str(roles_cfg.get("Body") or "GD Body")
+    
+    # Get or create the body style
     try:
-        normal_style = doc.styles["Normal"]
+        body_style = doc.styles[body_style_name]
+    except KeyError:
+        # Create the style if it doesn't exist, based on Normal
+        try:
+            body_style = doc.styles.add_style(body_style_name, WD_STYLE_TYPE.PARAGRAPH)
+            body_style.base_style = doc.styles["Normal"]
+            print(f"DEBUG: Created new style '{body_style_name}' based on Normal")
+        except Exception as e:
+            print(f"DEBUG: Failed to create style '{body_style_name}': {e}")
+            body_style = doc.styles["Normal"]
     except Exception:
-        normal_style = None
+        body_style = None
 
     collapsed_paragraphs = 0
     run_combo_counts: Dict[str, int] = {}
@@ -567,33 +619,37 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
                 or name.startswith("Heading ")
                 or is_toc
             )
-            if collapse_misc and not protected and normal_style is not None and name != "Normal":
+            # Always assign body_style to non-protected paragraphs in body
+            # This ensures style_overrides.Body applies to all body text
+            if not protected and body_style is not None and name != body_style_name:
                 try:
-                    p.style = normal_style
+                    p.style = body_style
                     collapsed_paragraphs += 1
-                    pf = p.paragraph_format
-                    # 1) Reapply style-level values where there was no
-                    #    direct paragraph override.
-                    for attr, val in style_pf_vals.items():
-                        if attr in para_pf_vals:
-                            continue
-                        try:
-                            setattr(pf, attr, val)
-                        except Exception:
-                            pass
-                    # 2) Reapply paragraph-level overrides so they stay
-                    #    exactly as in the original document.
-                    for attr, val in para_pf_vals.items():
-                        try:
-                            setattr(pf, attr, val)
-                        except Exception:
-                            pass
+                    if collapse_misc:
+                        pf = p.paragraph_format
+                        # 1) Reapply style-level values where there was no
+                        #    direct paragraph override.
+                        for attr, val in style_pf_vals.items():
+                            if attr in para_pf_vals:
+                                continue
+                            try:
+                                setattr(pf, attr, val)
+                            except Exception:
+                                pass
+                        # 2) Reapply paragraph-level overrides so they stay
+                        #    exactly as in the original document.
+                        for attr, val in para_pf_vals.items():
+                            try:
+                                setattr(pf, attr, val)
+                            except Exception:
+                                pass
                 except Exception:
                     pass
         else:
-            if collapse_misc and normal_style is not None:
+            # No style name - assign body_style
+            if body_style is not None:
                 try:
-                    p.style = normal_style
+                    p.style = body_style
                     collapsed_paragraphs += 1
                 except Exception:
                     pass
@@ -657,6 +713,7 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
         # Whitelist important styles by name and created character styles.
         name_whitelist = [
             "Normal",
+            body_style_name,  # Add the body style (e.g. "GD Body")
             "Title",
             "Subtitle",
             "Author",

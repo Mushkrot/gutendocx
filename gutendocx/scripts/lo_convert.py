@@ -62,8 +62,24 @@ def convert_document(input_path, output_pdf_path):
         sys.exit(1)
 
     try:
-        print("Refreshing indexes (UpdateAllIndexes)...")
-        doc.refresh()
+        # Update all document indexes (TOC, etc.)
+        print("Updating all document indexes...")
+        try:
+            indexes = doc.getDocumentIndexes()
+            count = indexes.getCount()
+            print(f"Found {count} index(es) in document")
+            for i in range(count):
+                idx = indexes.getByIndex(i)
+                idx.update()
+                print(f"  Updated index {i}: {idx.getName() if hasattr(idx, 'getName') else 'unnamed'}")
+        except Exception as e:
+            print(f"Warning: Could not update indexes via getDocumentIndexes: {e}")
+            # Fallback: try refresh
+            try:
+                doc.refresh()
+                print("Used doc.refresh() as fallback")
+            except Exception as e2:
+                print(f"Warning: doc.refresh() also failed: {e2}")
         
         # Save the updated DOCX (overwrite the input inside the container)
         print("Saving updated DOCX...")

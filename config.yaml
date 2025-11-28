@@ -16,7 +16,7 @@ roles:
   Title: Title
   Subtitle: Subtitle
   Author: Author
-  Body: Normal
+  Body: GD Body
   Heading1: Heading 1
   Heading2: Heading 2
   Emphasis: Emphasis
@@ -92,11 +92,11 @@ style_overrides:
     spacing_after_pt: 12
   Body:
     font: Times New Roman
-    size_pt: 12
+    size_pt: 9.0
     align: justify
     line_spacing: 1.15
     bold: true
-    italic: false
+    italic: true
 remap_rules:
   Body:
   - Body Text
