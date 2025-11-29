@@ -12,6 +12,7 @@ from .loader import Loader
 from .scan import _style_key, _style_name, _has_paragraph_overrides
 from .cover import _ensure_output_path
 from .styles_xml import cleanup_styles_xml
+from .layout import ensure_body_section_with_numbering, analyze_document_sections, ensure_blank_page_after_cover, apply_footer_styles
 
 
 def _has_explicit_page_break(p) -> bool:
@@ -55,20 +56,15 @@ def _compute_body_start_index(doc: Document) -> int:
             if len(break_indices) >= 2:
                 break
     
-    print(f"DEBUG _compute_body_start_index: found {len(break_indices)} EXPLICIT breaks at indices {break_indices}")
-    
     if len(break_indices) >= 2:
         # Body starts after the SECOND break
         body_start = break_indices[1] + 1
-        print(f"DEBUG: Using second break. body_start={body_start}")
         return min(body_start, len(doc.paragraphs))
     elif len(break_indices) == 1:
         # Only one break found - body starts after it
         body_start = break_indices[0] + 1
-        print(f"DEBUG: Only one break found. body_start={body_start}")
         return min(body_start, len(doc.paragraphs))
     
-    print("DEBUG: No breaks found, treating whole document as body")
     return 0
 
 
@@ -285,20 +281,15 @@ def _apply_special_style_overrides(doc: Document, config: Dict[str, Any]) -> Dic
     return {"applied": bool(applied), "styles": applied}
 
 
-def _apply_body_style_overrides(doc: Document, config: Dict[str, Any]) -> Dict[str, Any]:
-    """Apply centralized overrides for the Body paragraph style.
+def _apply_body_style_overrides(doc: Document, config: Dict[str, Any], body_start: int) -> Dict[str, Any]:
+    """Apply overrides directly to body paragraphs, only for explicitly specified properties.
 
-    This uses roles.Body to locate the primary body style (default "Normal"),
-    and then applies overrides from style_overrides.Body plus any ephemeral
-    _body_override payload that may be attached to the config by the web API.
-
-    The goal is to adjust the *style definition* rather than touching every
-    paragraph individually, so that formatting remains centrally controlled
-    and predictable.
+    This function applies formatting changes ONLY for properties that are explicitly
+    set in the config. Properties not specified are left unchanged, preserving the
+    original document formatting.
+    
+    The overrides come from style_overrides.Body in the config.
     """
-
-    roles_cfg = (config or {}).get("roles", {}) or {}
-    body_name = str(roles_cfg.get("Body") or "Normal")
 
     so = (config or {}).get("style_overrides", {}) or {}
     base_ov = so.get("Body", {}) or {}
@@ -317,89 +308,245 @@ def _apply_body_style_overrides(doc: Document, config: Dict[str, Any]) -> Dict[s
         v is not None
         for v in (font_name, size_pt, align, bold, italic, line_spacing, spacing_before_pt, spacing_after_pt)
     ):
-        return {"applied": False, "style": body_name, "changes": {}}
+        return {"applied": False, "changes": {}, "paragraphs_modified": 0}
 
-    try:
-        style = doc.styles[body_name]
-    except Exception:
-        return {"applied": False, "style": body_name, "missing": True, "changes": {}}
+    # Protected style names that should not be modified
+    protected_names = {
+        "Title", "Subtitle", "Author",
+        "Cover Title", "Cover Subtitle", "Cover Author",
+        "Header", "Footer",
+    }
 
     changes: Dict[str, Any] = {}
+    paragraphs_modified = 0
 
-    # Font-level overrides
-    try:
-        f = style.font
-    except Exception:
-        f = None
-    if f is not None:
-        if font_name:
-            try:
-                f.name = font_name
-                changes["font_family"] = font_name
-            except Exception:
-                pass
-        if isinstance(size_pt, (int, float)) and size_pt > 0:
-            try:
-                f.size = Pt(float(size_pt))
-                changes["size_pt"] = float(size_pt)
-            except Exception:
-                pass
-        if bold is not None:
-            try:
-                f.bold = bool(bold)
-                changes["bold"] = bool(bold)
-            except Exception:
-                pass
-        if italic is not None:
-            try:
-                f.italic = bool(italic)
-                changes["italic"] = bool(italic)
-            except Exception:
-                pass
+    # Compute alignment value once
+    align_val = None
+    if isinstance(align, str) and align:
+        a = align.lower()
+        if a == "left":
+            align_val = WD_ALIGN_PARAGRAPH.LEFT
+        elif a == "center":
+            align_val = WD_ALIGN_PARAGRAPH.CENTER
+        elif a == "right":
+            align_val = WD_ALIGN_PARAGRAPH.RIGHT
+        elif a == "justify":
+            align_val = WD_ALIGN_PARAGRAPH.JUSTIFY
 
-    # Paragraph-level overrides (alignment and basic spacing parameters).
-    try:
-        pf = style.paragraph_format
-    except Exception:
-        pf = None
-    if pf is not None:
-        if isinstance(align, str) and align:
-            val = None
-            a = align.lower()
-            if a == "left":
-                val = WD_ALIGN_PARAGRAPH.LEFT
-            elif a == "center":
-                val = WD_ALIGN_PARAGRAPH.CENTER
-            elif a == "right":
-                val = WD_ALIGN_PARAGRAPH.RIGHT
-            elif a == "justify":
-                val = WD_ALIGN_PARAGRAPH.JUSTIFY
-            if val is not None:
+    for idx, p in enumerate(doc.paragraphs):
+        if idx < body_start:
+            continue
+
+        # Skip protected styles and headings
+        style = getattr(p, "style", None)
+        name = _style_name(style)
+        if name:
+            if name in protected_names or name.startswith("Heading ") or name.lower().startswith("toc"):
+                continue
+
+        modified = False
+
+        # Apply font-level overrides to each run in the paragraph
+        if font_name or size_pt is not None or bold is not None or italic is not None:
+            for r in p.runs:
                 try:
-                    pf.alignment = val
-                    changes["alignment"] = a
+                    f = r.font
+                    if font_name:
+                        f.name = font_name
+                        # Also set eastAsia and cs fonts for full coverage
+                        # This ensures LibreOffice uses the correct font
+                        try:
+                            f.cs_name = font_name  # Complex script font
+                        except Exception:
+                            pass
+                        # Clear theme font references which override explicit fonts
+                        try:
+                            rPr = r._r.get_or_add_rPr()
+                            for attr in ('asciiTheme', 'hAnsiTheme', 'csTheme', 'eastAsiaTheme'):
+                                rFonts = rPr.find('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}rFonts')
+                                if rFonts is not None:
+                                    rFonts.attrib.pop('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}' + attr, None)
+                        except Exception:
+                            pass
+                        if "font_family" not in changes:
+                            changes["font_family"] = font_name
+                        modified = True
+                    if isinstance(size_pt, (int, float)) and size_pt > 0:
+                        f.size = Pt(float(size_pt))
+                        if "size_pt" not in changes:
+                            changes["size_pt"] = float(size_pt)
+                        modified = True
+                    if bold is not None:
+                        f.bold = bool(bold)
+                        if "bold" not in changes:
+                            changes["bold"] = bool(bold)
+                        modified = True
+                    if italic is not None:
+                        f.italic = bool(italic)
+                        if "italic" not in changes:
+                            changes["italic"] = bool(italic)
+                        modified = True
                 except Exception:
                     pass
-        if isinstance(line_spacing, (int, float)) and line_spacing > 0:
-            try:
-                pf.line_spacing = float(line_spacing)
-                changes["line_spacing"] = float(line_spacing)
-            except Exception:
-                pass
-        if isinstance(spacing_before_pt, (int, float)) and spacing_before_pt >= 0:
-            try:
-                pf.space_before = Pt(float(spacing_before_pt))
-                changes["spacing_before_pt"] = float(spacing_before_pt)
-            except Exception:
-                pass
-        if isinstance(spacing_after_pt, (int, float)) and spacing_after_pt >= 0:
-            try:
-                pf.space_after = Pt(float(spacing_after_pt))
-                changes["spacing_after_pt"] = float(spacing_after_pt)
-            except Exception:
-                pass
 
-    return {"applied": bool(changes), "style": body_name, "changes": changes}
+        # Apply paragraph-level overrides
+        try:
+            pf = p.paragraph_format
+        except Exception:
+            pf = None
+        
+        if pf is not None:
+            if align_val is not None:
+                try:
+                    pf.alignment = align_val
+                    if "alignment" not in changes:
+                        changes["alignment"] = align
+                    modified = True
+                except Exception:
+                    pass
+            if isinstance(line_spacing, (int, float)) and line_spacing > 0:
+                try:
+                    pf.line_spacing = float(line_spacing)
+                    if "line_spacing" not in changes:
+                        changes["line_spacing"] = float(line_spacing)
+                    modified = True
+                except Exception:
+                    pass
+            if isinstance(spacing_before_pt, (int, float)) and spacing_before_pt >= 0:
+                try:
+                    pf.space_before = Pt(float(spacing_before_pt))
+                    if "spacing_before_pt" not in changes:
+                        changes["spacing_before_pt"] = float(spacing_before_pt)
+                    modified = True
+                except Exception:
+                    pass
+            if isinstance(spacing_after_pt, (int, float)) and spacing_after_pt >= 0:
+                try:
+                    pf.space_after = Pt(float(spacing_after_pt))
+                    if "spacing_after_pt" not in changes:
+                        changes["spacing_after_pt"] = float(spacing_after_pt)
+                    modified = True
+                except Exception:
+                    pass
+
+        if modified:
+            paragraphs_modified += 1
+
+    return {"applied": bool(changes), "changes": changes, "paragraphs_modified": paragraphs_modified}
+
+
+def _apply_headings_style_overrides(doc: Document, config: Dict[str, Any], body_start: int) -> Dict[str, Any]:
+    """Apply overrides to Heading paragraphs (chapter titles).
+    
+    This applies formatting to paragraphs with Heading 1, Heading 2, etc. styles.
+    Only explicitly specified properties are changed.
+    """
+    so = (config or {}).get("style_overrides", {}) or {}
+    headings_ov = so.get("Headings", {}) or {}
+    
+    font_name = headings_ov.get("font") or headings_ov.get("family")
+    size_pt = headings_ov.get("size_pt")
+    align = headings_ov.get("align")
+    bold = headings_ov.get("bold")
+    italic = headings_ov.get("italic")
+    all_caps = headings_ov.get("all_caps")
+    
+    if not any(
+        v is not None
+        for v in (font_name, size_pt, align, bold, italic, all_caps)
+    ):
+        return {"applied": False, "changes": {}, "paragraphs_modified": 0}
+    
+    changes: Dict[str, Any] = {}
+    paragraphs_modified = 0
+    
+    # Compute alignment value once
+    align_val = None
+    if isinstance(align, str) and align:
+        a = align.lower()
+        if a == "left":
+            align_val = WD_ALIGN_PARAGRAPH.LEFT
+        elif a == "center":
+            align_val = WD_ALIGN_PARAGRAPH.CENTER
+        elif a == "right":
+            align_val = WD_ALIGN_PARAGRAPH.RIGHT
+        elif a == "justify":
+            align_val = WD_ALIGN_PARAGRAPH.JUSTIFY
+    
+    for idx, p in enumerate(doc.paragraphs):
+        if idx < body_start:
+            continue
+        
+        # Only apply to Heading styles
+        style = getattr(p, "style", None)
+        name = _style_name(style)
+        if not name or not name.startswith("Heading"):
+            continue
+        
+        modified = False
+        
+        # Apply font-level overrides to each run
+        if font_name or size_pt is not None or bold is not None or italic is not None or all_caps is not None:
+            for r in p.runs:
+                try:
+                    f = r.font
+                    if font_name:
+                        f.name = font_name
+                        # Also set cs font for full coverage
+                        try:
+                            f.cs_name = font_name
+                        except Exception:
+                            pass
+                        # Clear theme font references which override explicit fonts
+                        try:
+                            rPr = r._r.get_or_add_rPr()
+                            for attr in ('asciiTheme', 'hAnsiTheme', 'csTheme', 'eastAsiaTheme'):
+                                rFonts = rPr.find('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}rFonts')
+                                if rFonts is not None:
+                                    rFonts.attrib.pop('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}' + attr, None)
+                        except Exception:
+                            pass
+                        if "font_family" not in changes:
+                            changes["font_family"] = font_name
+                        modified = True
+                    if isinstance(size_pt, (int, float)) and size_pt > 0:
+                        f.size = Pt(float(size_pt))
+                        if "size_pt" not in changes:
+                            changes["size_pt"] = float(size_pt)
+                        modified = True
+                    if bold is not None:
+                        f.bold = bool(bold)
+                        if "bold" not in changes:
+                            changes["bold"] = bool(bold)
+                        modified = True
+                    if italic is not None:
+                        f.italic = bool(italic)
+                        if "italic" not in changes:
+                            changes["italic"] = bool(italic)
+                        modified = True
+                    if all_caps is not None:
+                        f.all_caps = bool(all_caps)
+                        if "all_caps" not in changes:
+                            changes["all_caps"] = bool(all_caps)
+                        modified = True
+                except Exception:
+                    pass
+        
+        # Apply paragraph-level overrides
+        if align_val is not None:
+            try:
+                pf = p.paragraph_format
+                pf.alignment = align_val
+                if "alignment" not in changes:
+                    changes["alignment"] = align
+                modified = True
+            except Exception:
+                pass
+        
+        if modified:
+            paragraphs_modified += 1
+    
+    return {"applied": bool(changes), "changes": changes, "paragraphs_modified": paragraphs_modified}
 
 
 def analyze_whole_document(input_path: str, config: Dict[str, Any], max_samples: int = 3) -> Dict[str, Any]:
@@ -492,6 +639,9 @@ def analyze_whole_document(input_path: str, config: Dict[str, Any], max_samples:
 
     heading_styles.sort(key=lambda h: (h["level"] if isinstance(h.get("level"), int) else 999, h["name"]))
 
+    # Analyze document section structure for TOC page numbering
+    section_analysis = analyze_document_sections(doc)
+
     return {
         "whole": {
             "body_start_index": body_start,
@@ -502,6 +652,7 @@ def analyze_whole_document(input_path: str, config: Dict[str, Any], max_samples:
                 "body_paragraph_total": para_total,
                 "body_run_total": run_total,
             },
+            "section_analysis": section_analysis,
         }
     }
 
@@ -541,9 +692,7 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
         try:
             body_style = doc.styles.add_style(body_style_name, WD_STYLE_TYPE.PARAGRAPH)
             body_style.base_style = doc.styles["Normal"]
-            print(f"DEBUG: Created new style '{body_style_name}' based on Normal")
-        except Exception as e:
-            print(f"DEBUG: Failed to create style '{body_style_name}': {e}")
+        except Exception:
             body_style = doc.styles["Normal"]
     except Exception:
         body_style = None
@@ -619,35 +768,34 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
                 or name.startswith("Heading ")
                 or is_toc
             )
-            # Always assign body_style to non-protected paragraphs in body
-            # This ensures style_overrides.Body applies to all body text
-            if not protected and body_style is not None and name != body_style_name:
+            # Only reassign styles if collapse_misc is explicitly enabled
+            # Otherwise, preserve original paragraph styles to maintain formatting
+            if collapse_misc and not protected and body_style is not None and name != body_style_name:
                 try:
                     p.style = body_style
                     collapsed_paragraphs += 1
-                    if collapse_misc:
-                        pf = p.paragraph_format
-                        # 1) Reapply style-level values where there was no
-                        #    direct paragraph override.
-                        for attr, val in style_pf_vals.items():
-                            if attr in para_pf_vals:
-                                continue
-                            try:
-                                setattr(pf, attr, val)
-                            except Exception:
-                                pass
-                        # 2) Reapply paragraph-level overrides so they stay
-                        #    exactly as in the original document.
-                        for attr, val in para_pf_vals.items():
-                            try:
-                                setattr(pf, attr, val)
-                            except Exception:
-                                pass
+                    pf = p.paragraph_format
+                    # 1) Reapply style-level values where there was no
+                    #    direct paragraph override.
+                    for attr, val in style_pf_vals.items():
+                        if attr in para_pf_vals:
+                            continue
+                        try:
+                            setattr(pf, attr, val)
+                        except Exception:
+                            pass
+                    # 2) Reapply paragraph-level overrides so they stay
+                    #    exactly as in the original document.
+                    for attr, val in para_pf_vals.items():
+                        try:
+                            setattr(pf, attr, val)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
         else:
-            # No style name - assign body_style
-            if body_style is not None:
+            # No style name - only assign body_style if collapse_misc is enabled
+            if collapse_misc and body_style is not None:
                 try:
                     p.style = body_style
                     collapsed_paragraphs += 1
@@ -687,8 +835,22 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
                 except Exception:
                     pass
 
-    body_overrides = _apply_body_style_overrides(doc, config)
+    body_overrides = _apply_body_style_overrides(doc, config, body_start)
+    headings_overrides = _apply_headings_style_overrides(doc, config, body_start)
     special_overrides = _apply_special_style_overrides(doc, config)
+
+    # Ensure blank page (page 2) exists after cover
+    # This must be done BEFORE section numbering fix
+    blank_page_result = ensure_blank_page_after_cover(doc, config)
+
+    # Ensure body section has proper page numbering restart for correct TOC
+    # This converts the last page break before body into a section break
+    # with pgNumType start=1, so LibreOffice calculates correct page numbers
+    section_fix_result = ensure_body_section_with_numbering(doc, config)
+
+    # Apply footer styles (page number styling) with numbering starting from 3
+    # This clears all footers and adds styled PAGE field only to body section
+    footer_result = apply_footer_styles(doc, config)
 
     out_cfg = (config or {}).get("output", {}) or {}
     out_dir = out_cfg.get("dir", "output")
@@ -761,7 +923,11 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
             "created_char_styles": sorted(created_char_styles),
             "styles_cleanup": cleanup_stats,
             "body_overrides": body_overrides,
+            "headings_overrides": headings_overrides,
             "special_overrides": special_overrides,
+            "blank_page_fix": blank_page_result,
+            "section_fix": section_fix_result,
+            "footer_result": footer_result,
         },
         "output_path": saved_path,
     }

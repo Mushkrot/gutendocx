@@ -482,7 +482,7 @@ def _ensure_output_path(out_dir: str, input_path: str, versioning: bool = False)
         i += 1
 
 
-def run_cover_pipeline(input_path: str, config: Dict[str, Any], out_dir: str, dry_run: bool = False, no_layout: bool = False, vision: bool = False) -> Dict[str, Any]:
+def run_cover_pipeline(input_path: str, config: Dict[str, Any], out_dir: str, dry_run: bool = False, no_layout: bool = False, vision: bool = False, footer_style_overrides: Dict[str, Any] = None) -> Dict[str, Any]:
     loader = Loader()
     doc = loader.open(input_path)
 
@@ -510,7 +510,7 @@ def run_cover_pipeline(input_path: str, config: Dict[str, Any], out_dir: str, dr
     first_body_idx = min(last_cover_idx + 1, len(doc.paragraphs) - 1)
 
     if not no_layout and not detection.get("skip"):
-        apply_sections_and_numbering(doc, config, last_cover_idx, first_body_idx)
+        apply_sections_and_numbering(doc, config, last_cover_idx, first_body_idx, footer_style_overrides)
 
     os.makedirs(out_dir, exist_ok=True)
     out_cfg = (config or {}).get("output", {})
@@ -518,19 +518,17 @@ def run_cover_pipeline(input_path: str, config: Dict[str, Any], out_dir: str, dr
     out_path = _ensure_output_path(out_dir, input_path, versioning=versioning)
 
     saved_path = None
-    should_save = (not dry_run) and (
-        bool(applied.get("changed")) or (not no_layout and not detection.get("skip"))
-    )
-    if should_save:
+    # Always save when not dry_run - user expects a file to download
+    if not dry_run:
         saved_path = loader.save(doc, out_path)
     else:
-        # Do not save unchanged document; emit a warning for visibility.
+        # Dry run mode - don't save, just analyze
         try:
             w = detection.get("warnings")
             if isinstance(w, list):
-                w.append("no_changes_not_saved")
+                w.append("dry_run_not_saved")
             else:
-                detection["warnings"] = ["no_changes_not_saved"]
+                detection["warnings"] = ["dry_run_not_saved"]
         except Exception:
             pass
 

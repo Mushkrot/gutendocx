@@ -7,6 +7,13 @@ import uuid
 import time
 from typing import Any, Dict, Optional
 
+from .layout import fix_theme_fonts
+
+
+# Default Docker image with fonts - can be overridden via config
+# Use custom image with pre-installed fonts for consistent rendering
+DEFAULT_DOCKER_IMAGE = "gutendocx/libreoffice:latest"
+
 
 def run_libreoffice_convert(
     input_path: str,
@@ -14,6 +21,8 @@ def run_libreoffice_convert(
     out_dir: Optional[str] = None,
     timeout: int = 120,
     use_docker: bool = False,
+    docker_image: Optional[str] = None,
+    theme_font: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Convert a DOCX via LibreOffice in headless mode (DOCX -> DOCX + PDF).
 
@@ -27,11 +36,25 @@ def run_libreoffice_convert(
       3. Exec the script inside the container (via UNO).
       4. Read the result (DOCX + PDF) via 'docker exec ... cat' -> local file.
       5. Remove the container.
+    
+    Args:
+        theme_font: Optional font name to use for theme fonts. If None, theme fonts
+                    are left unchanged (preserving user's font choices).
     """
 
     abs_input = os.path.abspath(input_path)
     if not os.path.isfile(abs_input):
         raise FileNotFoundError(f"Input DOCX not found for LibreOffice: {abs_input}")
+
+    # Only fix theme fonts if explicitly requested
+    # This preserves user's font choices from the UI
+    if theme_font:
+        try:
+            theme_fix_result = fix_theme_fonts(abs_input, major_font=theme_font, minor_font=theme_font)
+            if theme_fix_result.get("changed"):
+                print(f"[LibreOffice] Fixed theme fonts: {theme_fix_result.get('original_major')} -> {theme_font}")
+        except Exception as e:
+            print(f"[LibreOffice] Warning: Could not fix theme fonts: {e}")
 
     if out_dir is None:
         out_dir = os.path.dirname(abs_input) or os.getcwd()
@@ -57,12 +80,13 @@ def run_libreoffice_convert(
             }
 
         container_name = f"lo_worker_{uuid.uuid4().hex}"
+        image = docker_image or DEFAULT_DOCKER_IMAGE
         
         # 1. Start container
         run_cmd = [
             "docker", "run", "-d", "--rm",
             "--name", container_name,
-            "lscr.io/linuxserver/libreoffice:latest"
+            image
         ]
         
         try:

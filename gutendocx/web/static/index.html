@@ -13,8 +13,8 @@
     button { margin-right: 8px; }
     .primary-actions { margin: 20px 0; }
     .primary-button {
-      padding: 10px 22px;
-      font-size: 15px;
+      padding: 8px 20px;
+      font-size: 14px;
       font-weight: 600;
       border-radius: 999px;
       border: 2px solid #2563eb;
@@ -22,6 +22,12 @@
       color: #fff;
       cursor: pointer;
       box-shadow: 0 2px 6px rgba(37, 99, 235, 0.35);
+    }
+    /* Ensure main action buttons (Apply Styles / Apply TOC) look identical in size */
+    .primary-button.action-main {
+      width: 132px;
+      text-align: center;
+      white-space: nowrap;
     }
     .primary-button.secondary {
       background-color: #fff;
@@ -69,7 +75,8 @@
     .inline label { min-width: unset; }
     .w-280 { width: 280px; }
     .w-120 { width: 120px; }
-    .muted { color: #888; }
+    /* Muted state should only affect background, not text color */
+    .muted { color: #000; }
     .card.muted { background: #f3f3f3; }
     /* Ensure special style rows align columns regardless of style name length */
     .spec-style-row .override {
@@ -101,27 +108,68 @@
 </head>
 <body>
   <h1>GutenDocx — Cover UI (MVP)</h1>
-  <div class="row">
-    <label for="inputPath">Input DOCX path</label>
-    <input id="inputPath" type="text" value="Simples/test2.docx" />
-    <select id="docPicker" style="margin-left:8px; min-width:240px;"></select>
-    <button id="btnUpload" style="margin-left:8px;">Upload files…</button>
-    <span id="batchInfo" class="hint" style="margin-left:8px; display:none;"></span>
+  <div class="row" style="display:flex; align-items:center; gap:16px;">
+    <button id="btnUpload" style="
+      padding: 10px 22px;
+      font-size: 15px;
+      font-weight: 600;
+      background: linear-gradient(135deg, #4a90d9 0%, #357abd 100%);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(74,144,217,0.3);
+      transition: all 0.2s ease;
+    " onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(74,144,217,0.4)';"
+       onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 4px rgba(74,144,217,0.3)';">
+      📁 Upload files…
+    </button>
+    <span id="batchInfo" class="hint" style="display:none;"></span>
+    <button id="btnResetDefaults" style="
+      padding: 8px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%);
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(238,90,90,0.3);
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    " onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(238,90,90,0.4)';"
+       onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 4px rgba(238,90,90,0.3)';">
+      ↺ Reset Defaults
+    </button>
+    <span class="hint">Reset all style overrides</span>
   </div>
+  <input id="inputPath" type="hidden" value="" />
   <input id="fileUpload" type="file" multiple webkitdirectory style="display:none;" />
+  <input id="configPath" type="hidden" value="config.yaml" />
   <div class="row row-flex">
-    <div class="field">
-      <label for="configPath">Config path (optional)</label>
-      <input id="configPath" type="text" value="config.yaml" />
-    </div>
     <div class="field download-field" id="downloadRow" style="display:none;">
       <label>Download</label>
-      <div class="download-card">
+      <div class="download-card" style="display:flex; align-items:center; gap:16px; padding:12px 16px; background:#f8f9fa; border-radius:8px; border:1px solid #e9ecef;">
         <div>
-          <strong>Your file is ready</strong>
-          <span id="downloadFileName" class="hint"></span>
+          <strong style="font-size:15px;">Your file is ready</strong>
+          <span id="downloadFileName" class="hint" style="display:block; margin-top:4px;"></span>
         </div>
-        <button id="downloadBtn">Download</button>
+        <button id="downloadBtn" style="
+          padding: 10px 22px;
+          font-size: 15px;
+          font-weight: 600;
+          background: linear-gradient(135deg, #28a745 0%, #20903b 100%);
+          color: white;
+          border: none;
+          border-radius: 6px;
+          cursor: pointer;
+          box-shadow: 0 2px 4px rgba(40,167,69,0.3);
+          transition: all 0.2s ease;
+          white-space: nowrap;
+        " onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(40,167,69,0.4)';"
+           onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 4px rgba(40,167,69,0.3)';">
+          ⬇ Download
+        </button>
       </div>
     </div>
   </div>
@@ -135,7 +183,7 @@
   <div class="row">
     <label>Options</label>
     <div class="inline">
-      <label><input id="vision" type="checkbox" checked /> Vision</label>
+      <label><input id="vision" type="checkbox" checked /> AI Vision</label>
       <label><input id="noLayout" type="checkbox" checked /> No layout (safe mode)</label>
     </div>
   </div>
@@ -159,12 +207,20 @@
     <span id="costEst" class="hint" style="margin-left:8px;">~$0.000</span>
   </div>
   <div class="row primary-actions">
-    <button id="btnAnalyze" class="primary-button secondary">Analyze</button>
-    <button id="btnApply" class="primary-button">Apply</button>
-    <span class="hint">Analyze — preview a detailed report on screen. Apply — apply the settings and save a new DOCX file.</span>
+    <div class="inline" style="flex-wrap:wrap; align-items:flex-start; gap:16px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <button id="btnApply" class="primary-button action-main">Apply Styles</button>
+        <span class="hint">Styles are analyzed automatically after upload. Apply Styles — apply the settings and save a new DOCX file.</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <button id="btnTocApply" class="primary-button action-main">Apply TOC</button>
+        <span class="hint">Apply TOC — rebuild or refresh only the Table of Contents using the selected mode.</span>
+      </div>
+    </div>
   </div>
   <div class="row" id="coverScope" style="border-top:1px solid #eee; padding-top:12px;">
     <label>Cover styles</label>
+    <span class="hint" style="margin-left:8px;">Here you control only the cover page (title, subtitle, author).</span>
     <div>
       <details>
         <summary>Title</summary>
@@ -285,14 +341,47 @@
           <div style="margin-top:8px; padding-top:8px; border-top:1px dashed #ddd;">
             <div class="inline">
               <label style="font-weight:600; color:#2563eb;"><input id="autoUpdateToc" type="checkbox" checked /> Update TOC after applying styles</label>
-              <label for="tocMode" style="margin-left:16px;">Mode</label>
-              <select id="tocMode" class="w-200">
-                <option value="structured" selected>Structured (Heading 1–2)</option>
-                <option value="heuristic">Heuristic (chapter patterns)</option>
-                <option value="auto">Auto</option>
-              </select>
             </div>
-            <span class="hint">Automatically rebuild and update Table of Contents (via LibreOffice) on the styled document.</span>
+            <span class="hint">Automatically rebuild and update Table of Contents (via LibreOffice) on the styled document using the TOC mode selected below.</span>
+          </div>
+        </div>
+        <div class="card" id="cardHeadings">
+          <div class="inline"><label class="override"><input id="ovHeadings" type="checkbox" /> Override Chapter Headings style</label></div>
+          <div class="inline">
+            <label>Family</label>
+            <input id="headingsFamily" class="w-280" type="text" placeholder="Times New Roman" />
+            <select id="headingsFontSel" class="w-280"></select>
+          </div>
+          <div class="inline">
+            <label>Size (pt)</label>
+            <input id="headingsSize" class="w-120" type="number" min="6" max="96" step="1" placeholder="18" />
+            <select id="headingsSizeSel" class="w-120"></select>
+            <label>Align</label>
+            <select id="headingsAlign" class="w-120">
+              <option value="">(keep)</option>
+              <option value="left">left</option>
+              <option value="center">center</option>
+              <option value="right">right</option>
+              <option value="justify">justify</option>
+            </select>
+            <label><input id="headingsBold" type="checkbox" /> Bold</label>
+            <label><input id="headingsItalic" type="checkbox" /> Italic</label>
+            <label><input id="headingsAllCaps" type="checkbox" /> ALL CAPS</label>
+          </div>
+        </div>
+        <div class="card" id="cardFooter">
+          <div class="inline"><label class="override"><input id="ovFooter" type="checkbox" /> Override Page Number style</label></div>
+          <div class="inline">
+            <label>Family</label>
+            <input id="footerFamily" class="w-280" type="text" placeholder="Times New Roman" />
+            <select id="footerFontSel" class="w-280"></select>
+          </div>
+          <div class="inline">
+            <label>Size (pt)</label>
+            <input id="footerSize" class="w-120" type="number" min="6" max="96" step="1" placeholder="12" />
+            <select id="footerSizeSel" class="w-120"></select>
+            <label><input id="footerBold" type="checkbox" /> Bold</label>
+            <label><input id="footerItalic" type="checkbox" /> Italic</label>
           </div>
         </div>
         <div class="card" id="cardSpecials">
@@ -308,10 +397,15 @@
         <div class="card" id="cardToc">
           <div class="inline">
             <label>Table of Contents</label>
-            <span class="hint">Generate or refresh a Word-style TOC based on heading styles. Uses mode selected above.</span>
+            <span class="hint">Configure how the TOC is built. Use Apply TOC above to generate or refresh it using the selected mode.</span>
           </div>
-          <div class="inline">
-            <button id="btnTocApply" class="primary-button secondary">Apply TOC</button>
+          <div class="inline" style="margin-top:8px;">
+            <label for="tocMode">TOC mode</label>
+            <select id="tocMode" class="w-200">
+              <option value="structured" selected>Structured (Heading 1–2)</option>
+              <option value="heuristic">Heuristic (chapter patterns)</option>
+              <option value="auto">Auto</option>
+            </select>
           </div>
         </div>
       </details>
@@ -335,14 +429,8 @@
       </div>
     </div>
   </div>
-  <div class="row">
-    <details>
-      <summary>Result</summary>
-      <div style="margin-top:8px;">
-        <textarea id="output" readonly></textarea>
-      </div>
-    </details>
-  </div>
+  <!-- Hidden technical textarea used internally by JS for JSON/debug, not shown in GUI -->
+  <textarea id="output" readonly style="display:none;"></textarea>
 
   <div id="busy" class="busy-backdrop" style="display:none;">
     <div class="busy-box">
@@ -355,12 +443,26 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const api = (p) => `${location.origin}${p}`;
-    const FONTS = [
-      "Times New Roman","Georgia","Garamond","Book Antiqua","Palatino Linotype",
-      "Cambria","Calibri","Arial","Helvetica","PT Serif","Baskerville",
-      "Courier New","Verdana"
-    ];
+    // Fonts will be loaded from API
+    let FONTS = [];
     const SIZE_PRESETS = [10,11,12,13,14,16,18,20,22,24,26,28,30,32,36,40,44,48,56,64];
+    
+    // Load fonts from server
+    async function loadFonts() {
+      try {
+        const res = await fetch(api("/fonts/list"));
+        const data = await res.json();
+        FONTS = data.fonts || [];
+        console.log(`Loaded ${FONTS.length} fonts from server`);
+        // Re-populate all font selects
+        populateAllFontSelects();
+      } catch (e) {
+        console.error("Failed to load fonts:", e);
+        // Fallback to basic fonts
+        FONTS = ["Times New Roman","Arial","Georgia","Garamond","Cambria","Calibri","Helvetica","Verdana","Courier New"];
+        populateAllFontSelects();
+      }
+    }
 
     let specialStylesCache = [];
     let currentBatch = null;
@@ -426,6 +528,7 @@
       if (a) styles.author = a;
 
       // Whole-document Body style overrides (centralized formatting for main text)
+      // Only send properties that user explicitly set (non-empty values)
       const body = {};
       if (document.getElementById('ovBody')?.checked) {
         const fam = document.getElementById('bodyFamily')?.value.trim();
@@ -434,14 +537,51 @@
         const lsVal = parseFloat(document.getElementById('bodyLineSpacing')?.value || '');
         const boldEl = document.getElementById('bodyBold');
         const italicEl = document.getElementById('bodyItalic');
+        // Only include family if user typed something (not placeholder)
         if (fam) body.family = fam;
-        if (!Number.isNaN(sizeVal)) body.size_pt = sizeVal;
-        if (!Number.isNaN(lsVal)) body.line_spacing = lsVal;
-        if (align) body.align = align;
-        if (boldEl) body.bold = !!boldEl.checked;
-        if (italicEl) body.italic = !!italicEl.checked;
+        // Only include size if user entered a value
+        if (!Number.isNaN(sizeVal) && sizeVal > 0) body.size_pt = sizeVal;
+        // Only include line_spacing if user entered a value
+        if (!Number.isNaN(lsVal) && lsVal > 0) body.line_spacing = lsVal;
+        // Only include align if not "(keep)"
+        if (align && align !== 'keep') body.align = align;
+        // Only include bold/italic if checkbox is checked (true means apply bold/italic)
+        if (boldEl && boldEl.checked) body.bold = true;
+        if (italicEl && italicEl.checked) body.italic = true;
       }
       if (Object.keys(body).length) styles.body = body;
+
+      // Chapter Headings style overrides
+      const headings = {};
+      if (document.getElementById('ovHeadings')?.checked) {
+        const fam = document.getElementById('headingsFamily')?.value.trim();
+        const sizeVal = parseFloat(document.getElementById('headingsSize')?.value || '');
+        const align = document.getElementById('headingsAlign')?.value;
+        const boldEl = document.getElementById('headingsBold');
+        const italicEl = document.getElementById('headingsItalic');
+        const allCapsEl = document.getElementById('headingsAllCaps');
+        if (fam) headings.family = fam;
+        if (!Number.isNaN(sizeVal) && sizeVal > 0) headings.size_pt = sizeVal;
+        if (align && align !== 'keep') headings.align = align;
+        if (boldEl && boldEl.checked) headings.bold = true;
+        if (italicEl && italicEl.checked) headings.italic = true;
+        if (allCapsEl && allCapsEl.checked) headings.all_caps = true;
+      }
+      if (Object.keys(headings).length) styles.headings = headings;
+
+      // Page Number (footer) style overrides
+      const footer = {};
+      if (document.getElementById('ovFooter')?.checked) {
+        const fam = document.getElementById('footerFamily')?.value.trim();
+        const sizeVal = parseFloat(document.getElementById('footerSize')?.value || '');
+        const boldEl = document.getElementById('footerBold');
+        const italicEl = document.getElementById('footerItalic');
+        if (fam) footer.font_family = fam;
+        if (!Number.isNaN(sizeVal) && sizeVal > 0) footer.size_pt = sizeVal;
+        if (boldEl && boldEl.checked) footer.bold = true;
+        if (italicEl && italicEl.checked) footer.italic = true;
+      }
+      if (Object.keys(footer).length) styles.footer = footer;
 
       const specialsOut = {};
       for (const row of document.querySelectorAll('#specialStylesList .spec-style-row')) {
@@ -533,12 +673,11 @@
     }
 
     function setButtonsDisabled(dis) {
-      try { $("btnAnalyze").disabled = dis; } catch {}
       try { $("btnApply").disabled = dis; } catch {}
       try { $("btnTocApply").disabled = dis; } catch {}
     }
 
-    function showToast(kind, text, ms = 3500) {
+    function showToast(kind, text, ms = 5500) {
       const box = $("toasts");
       const n = document.createElement('div');
       n.className = `toast ${kind || ''}`;
@@ -661,6 +800,7 @@
 
       setBusy(true, 'Uploading files…');
       setButtonsDisabled(true);
+      let uploadOk = false;
       try {
         const res = await fetch(api('/files/upload'), {
           method: 'POST',
@@ -672,6 +812,7 @@
         }
         const data = await res.json();
         currentBatch = data;
+        uploadOk = true;
 
         const first = (data.files && data.files[0]) || null;
         if (first && first.rel_path) {
@@ -687,6 +828,15 @@
       } finally {
         setBusy(false);
         setButtonsDisabled(false);
+      }
+
+      // Auto-run analyze on first file after successful upload
+      if (uploadOk && currentBatch && Array.isArray(currentBatch.files) && currentBatch.files.length) {
+        try {
+          await runAnalyzeAuto();
+        } catch (e) {
+          console.error('Auto-analyze failed:', e);
+        }
       }
     });
 
@@ -864,11 +1014,18 @@
     $("scopeWhole").addEventListener('change', updateScopeUI);
     updateScopeUI();
 
-    // Init font dropdowns and Override behavior
-    populateFontSelect('titleFontSel','titleFamily');
-    populateFontSelect('subtitleFontSel','subtitleFamily');
-    populateFontSelect('authorFontSel','authorFamily');
-    populateFontSelect('bodyFontSel','bodyFamily');
+    // Function to populate all font selects (called after fonts are loaded)
+    function populateAllFontSelects() {
+      populateFontSelect('titleFontSel','titleFamily');
+      populateFontSelect('subtitleFontSel','subtitleFamily');
+      populateFontSelect('authorFontSel','authorFamily');
+      populateFontSelect('bodyFontSel','bodyFamily');
+      populateFontSelect('headingsFontSel','headingsFamily');
+      populateFontSelect('footerFontSel','footerFamily');
+    }
+    
+    // Load fonts from server and init font dropdowns
+    loadFonts();
     function populateSizeSelect(selId, inputId) {
       const sel = $(selId);
       sel.innerHTML = '';
@@ -897,19 +1054,27 @@
     populateSizeSelect('subtitleSizeSel','subtitleSize');
     populateSizeSelect('authorSizeSel','authorSize');
     populateSizeSelect('bodySizeSel','bodySize');
+    populateSizeSelect('headingsSizeSel','headingsSize');
+    populateSizeSelect('footerSizeSel','footerSize');
     const toggleTitle = () => setRoleEnabled('title', $("ovTitle").checked);
     const toggleSubtitle = () => setRoleEnabled('subtitle', $("ovSubtitle").checked);
     const toggleAuthor = () => setRoleEnabled('author', $("ovAuthor").checked);
     const toggleBody = () => setRoleEnabled('body', $("ovBody").checked);
+    const toggleHeadings = () => setRoleEnabled('headings', $("ovHeadings").checked);
+    const toggleFooter = () => setRoleEnabled('footer', $("ovFooter").checked);
     $("ovTitle").addEventListener('change', toggleTitle);
     $("ovSubtitle").addEventListener('change', toggleSubtitle);
     $("ovAuthor").addEventListener('change', toggleAuthor);
     $("ovBody").addEventListener('change', toggleBody);
+    $("ovHeadings").addEventListener('change', toggleHeadings);
+    $("ovFooter").addEventListener('change', toggleFooter);
     // start disabled by default
     setRoleEnabled('title', false);
     setRoleEnabled('subtitle', false);
     setRoleEnabled('author', false);
     setRoleEnabled('body', false);
+    setRoleEnabled('headings', false);
+    setRoleEnabled('footer', false);
 
     function drawOverlay(items) {
       const img = $("coverImg");
@@ -982,7 +1147,7 @@
     $("showSubtitle").addEventListener('change', () => $("toggleOverlay").dispatchEvent(new Event('change')));
     $("showAuthor").addEventListener('change', () => $("toggleOverlay").dispatchEvent(new Event('change')));
 
-    $("btnAnalyze").addEventListener('click', async () => {
+    async function runAnalyzeAuto() {
       const payload = getPayload({ forceDryRun: true, includeDryRun: true, includeBatch: false });
       const whole = $("scopeWhole") && $("scopeWhole").checked;
       const path = whole ? '/whole/analyze' : '/cover/analyze';
@@ -1003,10 +1168,19 @@
         setBusy(false);
         setButtonsDisabled(false);
       }
-    });
+    }
 
     $("btnApply").addEventListener('click', async () => {
       const payload = getPayload({ includeDryRun: false, includeBatch: true });
+      
+      // Check if files are uploaded
+      const hasInput = payload.input && payload.input.trim().length > 0;
+      const hasBatch = payload.batch_files && payload.batch_files.length > 0;
+      if (!hasInput && !hasBatch) {
+        showToast('error', 'Please upload a file first using the "Upload files…" button');
+        return;
+      }
+      
       console.log("DEBUG btnApply payload:", JSON.stringify(payload));
       const whole = $("scopeWhole") && $("scopeWhole").checked;
       const path = whole ? '/whole/apply' : '/cover/apply';
@@ -1054,6 +1228,15 @@
           .map(f => f && f.rel_path)
           .filter(p => typeof p === 'string' && p.trim().length > 0);
       }
+      
+      // Check if files are uploaded
+      const hasInput = input && input.trim().length > 0;
+      const hasBatch = payload.batch_files && payload.batch_files.length > 0;
+      if (!hasInput && !hasBatch) {
+        showToast('error', 'Please upload a file first using the "Upload files…" button');
+        return;
+      }
+      
       console.log("DEBUG btnTocApply payload:", JSON.stringify(payload));
 
       $("output").value = 'Running /toc/apply...';
@@ -1071,6 +1254,55 @@
         } else {
           showToast('success', 'TOC updated');
         }
+      } catch (e) {
+        $("output").value = String(e);
+        showToast('error', String(e));
+      } finally {
+        setBusy(false);
+        setButtonsDisabled(false);
+      }
+    });
+
+    $("btnResetDefaults").addEventListener('click', async () => {
+      if (!confirm('Reset all style settings to default values?\n\nThis will overwrite config.yaml with default configuration.')) {
+        return;
+      }
+      
+      const configPath = $("configPath").value.trim() || null;
+      setBusy(true, 'Resetting to defaults…');
+      setButtonsDisabled(true);
+      
+      try {
+        const res = await fetch(api('/config/reset'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ config_path: configPath })
+        });
+        
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(`HTTP ${res.status}: ${txt}`);
+        }
+        
+        const json = await res.json();
+        $("output").value = JSON.stringify(json, null, 2);
+        
+        // Clear all override checkboxes
+        ['ovTitle', 'ovSubtitle', 'ovAuthor', 'ovBody', 'ovHeadings', 'ovFooter'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) {
+            el.checked = false;
+            el.dispatchEvent(new Event('change'));
+          }
+        });
+        
+        // Clear special overrides
+        document.querySelectorAll('.special-override-checkbox').forEach(cb => {
+          cb.checked = false;
+          cb.dispatchEvent(new Event('change'));
+        });
+        
+        showToast('success', 'Configuration reset to defaults');
       } catch (e) {
         $("output").value = String(e);
         showToast('error', String(e));

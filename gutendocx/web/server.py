@@ -57,6 +57,54 @@ try:
 except Exception:
     pass
 
+FONTS_DIR = os.path.join(os.getcwd(), "fonts")
+
+
+def _get_available_fonts() -> List[str]:
+    """Get list of available font family names from the fonts directory."""
+    if not os.path.isdir(FONTS_DIR):
+        return []
+    
+    font_names = set()
+    for fname in os.listdir(FONTS_DIR):
+        if fname.lower().endswith(('.ttf', '.otf', '.ttc')):
+            # Extract font family name from filename
+            # Remove extension and common suffixes like -Regular, -Bold, etc.
+            name = os.path.splitext(fname)[0]
+            # Remove weight/style suffixes
+            for suffix in ['-Regular', '-Bold', '-Italic', '-BoldItalic', '-Light', 
+                          '-Medium', '-SemiBold', '-ExtraBold', '-Thin', '-Black',
+                          '-VariableFont_wght', ' Regular', ' Bold', ' Italic',
+                          ' Bold Italic', ' Light', ' Medium']:
+                if name.endswith(suffix):
+                    name = name[:-len(suffix)]
+                    break
+            # Clean up remaining artifacts
+            name = name.replace('_', ' ').replace('-', ' ').strip()
+            if name:
+                font_names.add(name)
+    
+    # Sort alphabetically, but put common fonts first
+    priority_fonts = [
+        'Times New Roman', 'Arial', 'Georgia', 'Garamond', 'Cambria', 'Calibri',
+        'Helvetica', 'Verdana', 'Courier New', 'Palatino', 'Baskerville',
+        'Book Antiqua', 'Century', 'Trebuchet MS'
+    ]
+    
+    result = []
+    remaining = set(font_names)
+    for pf in priority_fonts:
+        # Check if priority font exists (case-insensitive match)
+        for fn in list(remaining):
+            if fn.lower() == pf.lower():
+                result.append(fn)
+                remaining.discard(fn)
+                break
+    
+    # Add remaining fonts sorted alphabetically
+    result.extend(sorted(remaining))
+    return result
+
 
 def _build_download_meta(saved_path: Optional[str]) -> Optional[Dict[str, str]]:
     """Return download metadata if the saved file lives under OUTPUT_DIR."""
@@ -83,6 +131,7 @@ def _build_batch_zip(items: List[Dict[str, str]], batch_id: Optional[str]) -> Op
     Each item must have keys:
       - input_path: original input path (relative to project root)
       - output_path: saved DOCX path on disk
+      - pdf_path: (optional) saved PDF path on disk
 
     When batch_id is provided and the corresponding Uploads/batch_id directory
     exists, we preserve the original folder structure inside the ZIP by
@@ -105,24 +154,58 @@ def _build_batch_zip(items: List[Dict[str, str]], batch_id: Optional[str]) -> Op
         for it in items:
             inp_rel = it.get("input_path")
             out_path = it.get("output_path")
-            if not out_path:
-                continue
-            abs_out = os.path.abspath(out_path)
-            if not os.path.exists(abs_out):
-                continue
-            arcname = os.path.basename(abs_out)
-            if batch_root and inp_rel:
-                inp_abs = os.path.abspath(os.path.join(os.getcwd(), inp_rel))
-                try:
-                    rel_to_root = os.path.relpath(inp_abs, batch_root)
-                except Exception:
-                    rel_to_root = None
-                if rel_to_root and not rel_to_root.startswith(".."):
-                    rel_dir = os.path.dirname(rel_to_root)
-                    if rel_dir:
-                        arcname = os.path.join(rel_dir, os.path.basename(abs_out))
-            zf.write(abs_out, arcname.replace(os.sep, "/"))
+            pdf_path = it.get("pdf_path")
+            
+            # Add DOCX
+            if out_path:
+                abs_out = os.path.abspath(out_path)
+                if os.path.exists(abs_out):
+                    arcname = os.path.basename(abs_out)
+                    if batch_root and inp_rel:
+                        inp_abs = os.path.abspath(os.path.join(os.getcwd(), inp_rel))
+                        try:
+                            rel_to_root = os.path.relpath(inp_abs, batch_root)
+                        except Exception:
+                            rel_to_root = None
+                        if rel_to_root and not rel_to_root.startswith(".."):
+                            rel_dir = os.path.dirname(rel_to_root)
+                            if rel_dir:
+                                arcname = os.path.join(rel_dir, os.path.basename(abs_out))
+                    zf.write(abs_out, arcname.replace(os.sep, "/"))
+            
+            # Add PDF if available
+            if pdf_path:
+                abs_pdf = os.path.abspath(pdf_path)
+                if os.path.exists(abs_pdf):
+                    pdf_arcname = os.path.basename(abs_pdf)
+                    if batch_root and inp_rel:
+                        inp_abs = os.path.abspath(os.path.join(os.getcwd(), inp_rel))
+                        try:
+                            rel_to_root = os.path.relpath(inp_abs, batch_root)
+                        except Exception:
+                            rel_to_root = None
+                        if rel_to_root and not rel_to_root.startswith(".."):
+                            rel_dir = os.path.dirname(rel_to_root)
+                            if rel_dir:
+                                pdf_arcname = os.path.join(rel_dir, os.path.basename(abs_pdf))
+                    zf.write(abs_pdf, pdf_arcname.replace(os.sep, "/"))
 
+    return zip_path
+
+
+def _build_single_zip(docx_path: str, pdf_path: Optional[str] = None) -> Optional[str]:
+    """Create a ZIP archive containing DOCX and optionally PDF for single file download."""
+    if not docx_path or not os.path.exists(docx_path):
+        return None
+    
+    base_name = os.path.splitext(os.path.basename(docx_path))[0]
+    zip_path = os.path.join(OUTPUT_DIR, f"{base_name}_{int(time.time())}.zip")
+    
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(docx_path, os.path.basename(docx_path))
+        if pdf_path and os.path.exists(pdf_path):
+            zf.write(pdf_path, os.path.basename(pdf_path))
+    
     return zip_path
 
 
@@ -299,6 +382,7 @@ def toc_apply(req: TocApplyRequest) -> Dict[str, Any]:
         soffice_bin = req.soffice or lo_cfg.get("binary") or "soffice"
         timeout = int(req.timeout or lo_cfg.get("timeout", 120))
         use_docker = bool(lo_cfg.get("use_docker", True))
+        docker_image = lo_cfg.get("docker_image")  # Custom image with fonts
         out_cfg = (cfg.get("output", {}) or {})
         base_out = out_cfg.get("dir") or "output"
         lo_dir = lo_cfg.get("dir") or os.path.join(base_out, lo_cfg.get("subdir", "lo_toc"))
@@ -317,6 +401,7 @@ def toc_apply(req: TocApplyRequest) -> Dict[str, Any]:
                 out_dir=lo_dir,
                 timeout=timeout,
                 use_docker=use_docker,
+                docker_image=docker_image,
             )
 
             final_path = lo_res.get("output_path") or pre_lo_path
@@ -370,6 +455,7 @@ def toc_apply(req: TocApplyRequest) -> Dict[str, Any]:
             out_dir=lo_dir,
             timeout=timeout,
             use_docker=use_docker,
+            docker_image=docker_image,
         )
 
         if not lo_res.get("ok"):
@@ -391,16 +477,22 @@ def toc_apply(req: TocApplyRequest) -> Dict[str, Any]:
             },
         }
 
-        download_meta = _build_download_meta(final_path)
-        if download_meta:
-            res["download"] = download_meta
-
         pdf_path = lo_res.get("pdf_output_path")
         if pdf_path:
             res["pdf_output_path"] = pdf_path
-            pdf_download = _build_download_meta(pdf_path)
-            if pdf_download:
-                res["pdf_download"] = pdf_download
+
+        # Build ZIP with both DOCX and PDF for download
+        if final_path and pdf_path:
+            zip_path = _build_single_zip(final_path, pdf_path)
+            if zip_path:
+                res["zip_path"] = zip_path
+                download_meta = _build_download_meta(zip_path)
+                if download_meta:
+                    res["download"] = download_meta
+        else:
+            download_meta = _build_download_meta(final_path)
+            if download_meta:
+                res["download"] = download_meta
 
         return res
     except Exception as e:
@@ -433,14 +525,14 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
     try:
         cfg = load_config(req.config_path)
         # Centralized overrides for Body style coming from the UI.
-        # These are merged into style_overrides.Body and persisted to
-        # config.yaml so that subsequent runs reuse the same settings.
+        # Only properties explicitly set in UI are applied - we do NOT merge
+        # with existing config.yaml values to preserve original document formatting.
         if req.styles and isinstance(req.styles, dict):  # type: ignore[redundant-expr]
             body_ov = req.styles.get("body")
             if isinstance(body_ov, dict):
                 so = (cfg.get("style_overrides") or {}) or {}
-                cur_body = (so.get("Body") or {}) or {}
-                new_body = dict(cur_body)
+                # Start with empty dict - only add properties explicitly set in UI
+                new_body: Dict[str, Any] = {}
                 fam = body_ov.get("family")
                 if isinstance(fam, str) and fam.strip():
                     new_body["font"] = fam.strip()
@@ -448,7 +540,7 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
                 if isinstance(size_val, (int, float)) and size_val > 0:
                     new_body["size_pt"] = float(size_val)
                 align = body_ov.get("align")
-                if isinstance(align, str) and align.strip():
+                if isinstance(align, str) and align.strip() and align.strip() != "keep":
                     new_body["align"] = align.strip()
                 if "bold" in body_ov:
                     new_body["bold"] = bool(body_ov.get("bold"))
@@ -465,6 +557,46 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
                     new_body["spacing_after_pt"] = float(spacing_after)
                 so["Body"] = new_body
                 cfg["style_overrides"] = so
+            # Headings (chapter titles) style overrides
+            headings_ov = req.styles.get("headings")
+            if isinstance(headings_ov, dict):
+                so = (cfg.get("style_overrides") or {}) or {}
+                new_headings: Dict[str, Any] = {}
+                fam = headings_ov.get("family")
+                if isinstance(fam, str) and fam.strip():
+                    new_headings["font"] = fam.strip()
+                size_val = headings_ov.get("size_pt")
+                if isinstance(size_val, (int, float)) and size_val > 0:
+                    new_headings["size_pt"] = float(size_val)
+                align = headings_ov.get("align")
+                if isinstance(align, str) and align.strip() and align.strip() != "keep":
+                    new_headings["align"] = align.strip()
+                if "bold" in headings_ov:
+                    new_headings["bold"] = bool(headings_ov.get("bold"))
+                if "italic" in headings_ov:
+                    new_headings["italic"] = bool(headings_ov.get("italic"))
+                if "all_caps" in headings_ov:
+                    new_headings["all_caps"] = bool(headings_ov.get("all_caps"))
+                so["Headings"] = new_headings
+                cfg["style_overrides"] = so
+            # Footer (page number) style overrides - stored in config for use in cover pipeline
+            footer_ov = req.styles.get("footer")
+            if isinstance(footer_ov, dict):
+                new_footer: Dict[str, Any] = {}
+                fam = footer_ov.get("font_family")
+                if isinstance(fam, str) and fam.strip():
+                    new_footer["font_family"] = fam.strip()
+                size_val = footer_ov.get("size_pt")
+                if isinstance(size_val, (int, float)) and size_val > 0:
+                    new_footer["size_pt"] = float(size_val)
+                if "bold" in footer_ov:
+                    new_footer["bold"] = bool(footer_ov.get("bold"))
+                if "italic" in footer_ov:
+                    new_footer["italic"] = bool(footer_ov.get("italic"))
+                if new_footer:
+                    so = (cfg.get("style_overrides") or {}) or {}
+                    so["Footer"] = new_footer
+                    cfg["style_overrides"] = so
             specials_ov = req.styles.get("specials")
             if isinstance(specials_ov, dict):
                 so_specials = (cfg.get("special_overrides") or {}) or {}
@@ -509,6 +641,7 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
             soffice_bin = lo_cfg.get("binary") or "soffice"
             timeout = int(lo_cfg.get("timeout", 120))
             use_docker = bool(lo_cfg.get("use_docker", True))
+            docker_image = lo_cfg.get("docker_image")
             out_cfg = (cfg.get("output", {}) or {})
             base_out = out_cfg.get("dir") or "output"
             
@@ -533,12 +666,16 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
                                     out_dir=base_out,
                                     timeout=timeout,
                                     use_docker=use_docker,
+                                    docker_image=docker_image,
                                 )
                                 if lo_res.get("ok"):
                                     final_path = lo_res.get("output_path")
                                     if final_path:
                                         r["output_path"] = final_path
                                         r["toc_updated"] = True
+                                    pdf_path = lo_res.get("pdf_output_path")
+                                    if pdf_path:
+                                        r["pdf_output_path"] = pdf_path
                                 else:
                                     r["toc_error"] = lo_res.get("error") or lo_res.get("stderr")
                         except Exception as e:
@@ -547,10 +684,13 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
                 
                 results.append({"input_path": path, "result": r})
                 out_path = r.get("output_path")
+                pdf_path = r.get("pdf_output_path")
                 if out_path:
-                    zip_items.append(
-                        {"input_path": path, "output_path": str(out_path)}
-                    )
+                    zip_items.append({
+                        "input_path": path,
+                        "output_path": str(out_path),
+                        "pdf_path": str(pdf_path) if pdf_path else None,
+                    })
 
             zip_path = _build_batch_zip(zip_items, req.batch_id)
             resp: Dict[str, Any] = {
@@ -595,6 +735,7 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
                         soffice_bin = lo_cfg.get("binary") or "soffice"
                         timeout = int(lo_cfg.get("timeout", 120))
                         use_docker = bool(lo_cfg.get("use_docker", True))
+                        docker_image = lo_cfg.get("docker_image")
                         
                         print(f"DEBUG: calling run_libreoffice_convert use_docker={use_docker}")
                         
@@ -609,6 +750,7 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
                             out_dir=lo_dir,
                             timeout=timeout,
                             use_docker=use_docker,
+                            docker_image=docker_image,
                         )
                         
                         print(f"DEBUG: run_libreoffice_convert result: ok={lo_res.get('ok')}")
@@ -630,9 +772,23 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
                     print(f"DEBUG: Exception in chained TOC: {e}")
                     res["toc_error"] = str(e)
 
-        download_meta = _build_download_meta(res.get("output_path"))
-        if download_meta:
-            res["download"] = download_meta
+        # Build ZIP with both DOCX and PDF for download
+        docx_path = res.get("output_path")
+        pdf_path = res.get("pdf_output_path")
+        if docx_path and pdf_path:
+            # Create ZIP with both files
+            zip_path = _build_single_zip(docx_path, pdf_path)
+            if zip_path:
+                res["zip_path"] = zip_path
+                download_meta = _build_download_meta(zip_path)
+                if download_meta:
+                    res["download"] = download_meta
+        else:
+            # Fallback to just DOCX
+            download_meta = _build_download_meta(docx_path)
+            if download_meta:
+                res["download"] = download_meta
+        
         res["debug"] = {"update_toc": req.update_toc, "toc_updated": res.get("toc_updated")}
         return res
     except Exception as e:
@@ -653,6 +809,42 @@ def list_simples() -> Dict[str, Any]:
             if n.lower().endswith(".docx"):
                 files.append(f"Simples/{n}")
         return {"files": files}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/fonts/list")
+def list_fonts() -> Dict[str, Any]:
+    """Return list of available font families from the fonts directory."""
+    try:
+        fonts = _get_available_fonts()
+        return {"fonts": fonts, "count": len(fonts)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class ResetConfigRequest(BaseModel):
+    config_path: Optional[str] = None
+
+
+@app.post("/config/reset")
+def reset_config(req: ResetConfigRequest) -> Dict[str, Any]:
+    """Reset configuration to default values."""
+    try:
+        from gutendocx.core.config import _read_default_config_dict, save_config
+        
+        # Get default config
+        default_cfg = _read_default_config_dict()
+        
+        # Save it to the config file
+        config_path = req.config_path or "config.yaml"
+        saved_path = save_config(default_cfg, config_path)
+        
+        return {
+            "ok": True,
+            "message": "Configuration reset to defaults",
+            "config_path": saved_path,
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

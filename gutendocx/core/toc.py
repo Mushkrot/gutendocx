@@ -10,6 +10,7 @@ from docx.oxml.ns import qn
 
 from .loader import Loader
 from .cover import _ensure_output_path
+from .layout import ensure_body_section_with_numbering
 
 
 def find_toc_paragraph_indices(doc: Document) -> List[int]:
@@ -217,6 +218,10 @@ def build_toc(input_path: str, config: Dict[str, Any], mode: str = "structured")
     removed = remove_existing_toc(doc)
     inserted = insert_word_toc(doc, config)
 
+    # Ensure body section has proper page numbering restart for correct TOC
+    # This is critical for LibreOffice to calculate correct page numbers
+    section_fix_result = ensure_body_section_with_numbering(doc, config)
+
     out_cfg = (config or {}).get("output", {}) or {}
     out_dir = out_cfg.get("dir", "output")
 
@@ -232,6 +237,7 @@ def build_toc(input_path: str, config: Dict[str, Any], mode: str = "structured")
             "removed": removed,
             "inserted": inserted,
             "heuristic": heuristic_info,
+            "section_fix": section_fix_result,
         },
         "output_path": saved_path,
     }
