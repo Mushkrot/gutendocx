@@ -174,10 +174,10 @@
     </div>
   </div>
   <div class="row scope-row">
-    <label class="scope-label">Scope</label>
+    <label class="scope-label">Apply to</label>
     <div class="scope-options">
-      <label class="scope-pill"><input id="scopeCover" type="radio" name="scope" value="cover" /> Cover only</label>
-      <label class="scope-pill"><input id="scopeWhole" type="radio" name="scope" value="whole" checked /> Whole document</label>
+      <label class="scope-pill"><input id="scopeCover" type="checkbox" /> Cover (title, subtitle, author)</label>
+      <label class="scope-pill"><input id="scopeBody" type="checkbox" checked /> Body (text, headings, footer)</label>
     </div>
   </div>
   <div class="row">
@@ -633,13 +633,19 @@
     function getPayload(opts = {}) {
       const { forceDryRun = false, includeDryRun = true, includeBatch = false } = opts;
       const styles = collectStyles();
+      
+      // New checkbox-based scope
+      const applyBody = $("scopeBody") && $("scopeBody").checked;
+      const applyCover = $("scopeCover") && $("scopeCover").checked;
+      
       const payload = {
         input: $("inputPath").value.trim(),
         config_path: $("configPath").value.trim() || null,
         vision: $("vision").checked,
         no_layout: $("noLayout").checked,
         model: $("modelSel").value,
-        scope: ($("scopeWhole") && $("scopeWhole").checked) ? "whole" : "cover",
+        apply_body: applyBody,
+        apply_cover: applyCover,
         min_confidence: parseFloat($("minConf").value),
         ...(Object.keys(styles).length ? { styles } : {}),
         ...(includeDryRun ? { dry_run: !!forceDryRun } : {}),
@@ -647,10 +653,8 @@
       
       // Check TOC update checkbox
       const tocCheckbox = $("autoUpdateToc");
-      console.log("DEBUG getPayload: tocCheckbox=", tocCheckbox, "checked=", tocCheckbox?.checked, "scope=", payload.scope);
-      if (tocCheckbox && tocCheckbox.checked && payload.scope === "whole") {
+      if (tocCheckbox && tocCheckbox.checked) {
         payload.update_toc = true;
-        console.log("DEBUG getPayload: setting update_toc=true");
         const tocMode = document.getElementById("tocMode");
         if (tocMode && tocMode.value) {
           payload.toc_mode = tocMode.value;
@@ -689,6 +693,9 @@
     const downloadState = {
       meta: null,
     };
+
+    // Timer handle for switching busy text between phases (cover -> body)
+    let applyBusyTimer = null;
 
     function updateDownloadUi(meta) {
       downloadState.meta = meta || null;
@@ -1004,14 +1011,27 @@
     }
 
     function updateScopeUI() {
-      const whole = $("scopeWhole") && $("scopeWhole").checked;
+      const bodyChecked = $("scopeBody") && $("scopeBody").checked;
+      const coverChecked = $("scopeCover") && $("scopeCover").checked;
       const coverRow = document.getElementById("coverScope");
       const wholeRow = document.getElementById("wholeScope");
-      if (coverRow) coverRow.classList.toggle("muted", whole);
-      if (wholeRow) wholeRow.classList.toggle("muted", !whole);
+      // Mute sections that are not selected
+      if (coverRow) coverRow.classList.toggle("muted", !coverChecked);
+      if (wholeRow) wholeRow.classList.toggle("muted", !bodyChecked);
+      // Show/hide AI Vision options based on Cover checkbox
+      const confRow = document.getElementById("confRow");
+      const visionEl = $("vision");
+      const visionLabel = visionEl && visionEl.parentElement;
+      if (confRow) confRow.style.opacity = coverChecked ? 1 : 0.5;
+      if (visionEl) {
+        visionEl.disabled = !coverChecked;
+      }
+      if (visionLabel) {
+        visionLabel.style.opacity = coverChecked ? 1 : 0.5;
+      }
     }
     $("scopeCover").addEventListener('change', updateScopeUI);
-    $("scopeWhole").addEventListener('change', updateScopeUI);
+    $("scopeBody").addEventListener('change', updateScopeUI);
     updateScopeUI();
 
     // Function to populate all font selects (called after fonts are loaded)
@@ -1149,8 +1169,8 @@
 
     async function runAnalyzeAuto() {
       const payload = getPayload({ forceDryRun: true, includeDryRun: true, includeBatch: false });
-      const whole = $("scopeWhole") && $("scopeWhole").checked;
-      const path = whole ? '/whole/analyze' : '/cover/analyze';
+      // Always analyze whole document to get style info
+      const path = '/whole/analyze';
       $("output").value = `Running ${path}...`;
       setBusy(true, 'Analyzing…');
       setButtonsDisabled(true);
@@ -1181,15 +1201,44 @@
         return;
       }
       
+      // Check if at least one scope is selected
+      if (!payload.apply_body && !payload.apply_cover) {
+        showToast('error', 'Please select at least one: Body or Cover');
+        return;
+      }
+      
       console.log("DEBUG btnApply payload:", JSON.stringify(payload));
-      const whole = $("scopeWhole") && $("scopeWhole").checked;
-      const path = whole ? '/whole/apply' : '/cover/apply';
-      $("output").value = `Running ${path}...`;
-      setBusy(true, 'Applying styles…');
+      $("output").value = 'Running /apply...';
+
+      // Reset any previous phase timer
+      if (applyBusyTimer) {
+        clearTimeout(applyBusyTimer);
+        applyBusyTimer = null;
+      }
+
+      // Detail what is being applied while spinner is shown
+      // Phase 1 text: depends on whether cover is enabled
+      let busyText = 'Applying styles…';
+      const hasCover = !!payload.apply_cover;
+      const hasBody = !!payload.apply_body;
+
+      if (hasCover) {
+        busyText = 'Cover: analyzing and applying styles…';
+      } else if (hasBody) {
+        busyText = 'Body: applying styles (text, headings, footer)…';
+      }
+      setBusy(true, busyText);
+
+      // If both Cover and Body are selected, switch message after a short delay
+      if (hasCover && hasBody) {
+        applyBusyTimer = setTimeout(() => {
+          setBusy(true, 'Body: applying styles (text, headings, footer)…');
+        }, 2200);
+      }
       setButtonsDisabled(true);
       updateDownloadUi(null);
       try {
-        const json = await callApi(path, payload);
+        const json = await callApi('/apply', payload);
         $("output").value = JSON.stringify(json, null, 2);
         await maybeShowPreview(json);
         if (json && json.download) {
@@ -1204,6 +1253,11 @@
         $("output").value = String(e);
         showToast('error', String(e));
       } finally {
+        // Stop spinner and any pending phase switch
+        if (applyBusyTimer) {
+          clearTimeout(applyBusyTimer);
+          applyBusyTimer = null;
+        }
         setBusy(false);
         setButtonsDisabled(false);
       }

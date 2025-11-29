@@ -308,6 +308,8 @@ class ApplyRequest(BaseModel):
     batch_id: Optional[str] = None
     update_toc: bool = False
     toc_mode: Optional[str] = None
+    apply_body: bool = True
+    apply_cover: bool = False
 
 
 class TocApplyRequest(BaseModel):
@@ -792,6 +794,219 @@ def whole_apply(req: ApplyRequest) -> Dict[str, Any]:
         res["debug"] = {"update_toc": req.update_toc, "toc_updated": res.get("toc_updated")}
         return res
     except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/apply")
+def unified_apply(req: ApplyRequest) -> Dict[str, Any]:
+    """Unified apply endpoint that handles both Cover and Body styles.
+    
+    This endpoint:
+    1. If apply_cover: runs AI detection + cover styles
+    2. If apply_body: applies body/headings/footer styles
+    3. Applies layout (sections, page numbering)
+    4. If update_toc: updates TOC via LibreOffice
+    5. Converts to PDF
+    6. Returns ZIP with DOCX + PDF
+    """
+    print(f"DEBUG: unified_apply called. apply_cover={req.apply_cover}, apply_body={req.apply_body}, update_toc={req.update_toc}")
+    
+    if not req.apply_cover and not req.apply_body:
+        raise HTTPException(status_code=400, detail="At least one of apply_cover or apply_body must be True")
+    
+    try:
+        cfg = load_config(req.config_path)
+        
+        # Setup model/confidence for vision
+        if req.model:
+            c = cfg.get("cover", {}) or {}
+            v = c.get("vision", {}) or {}
+            v["model"] = req.model
+            c["vision"] = v
+            cfg["cover"] = c
+        if req.min_confidence is not None:
+            c = cfg.get("cover", {}) or {}
+            v = c.get("vision", {}) or {}
+            v["min_confidence"] = float(req.min_confidence)
+            c["vision"] = v
+            cfg["cover"] = c
+        
+        # Apply cover styles from UI
+        if req.styles:
+            c = cfg.get("cover", {}) or {}
+            s = c.get("styles", {}) or {}
+            for role in ("title", "subtitle", "author"):
+                ov = (req.styles.get(role) or {}) if isinstance(req.styles, dict) else {}
+                if ov:
+                    cur = s.get(role, {}) or {}
+                    f = cur.get("font", {}) or {}
+                    f.update({k: v for k, v in ov.items() if v is not None})
+                    cur["font"] = f
+                    s[role] = cur
+            c["styles"] = s
+            cfg["cover"] = c
+            
+            # Body style overrides
+            body_ov = req.styles.get("body")
+            if isinstance(body_ov, dict):
+                so = (cfg.get("style_overrides") or {}) or {}
+                new_body: Dict[str, Any] = {}
+                fam = body_ov.get("family")
+                if isinstance(fam, str) and fam.strip():
+                    new_body["font"] = fam.strip()
+                size_val = body_ov.get("size_pt")
+                if isinstance(size_val, (int, float)) and size_val > 0:
+                    new_body["size_pt"] = float(size_val)
+                align = body_ov.get("align")
+                if isinstance(align, str) and align.strip() and align.strip() != "keep":
+                    new_body["align"] = align.strip()
+                if "bold" in body_ov:
+                    new_body["bold"] = bool(body_ov.get("bold"))
+                if "italic" in body_ov:
+                    new_body["italic"] = bool(body_ov.get("italic"))
+                line_spacing = body_ov.get("line_spacing")
+                if isinstance(line_spacing, (int, float)) and line_spacing > 0:
+                    new_body["line_spacing"] = float(line_spacing)
+                so["Body"] = new_body
+                cfg["style_overrides"] = so
+            
+            # Headings style overrides
+            headings_ov = req.styles.get("headings")
+            if isinstance(headings_ov, dict):
+                so = (cfg.get("style_overrides") or {}) or {}
+                new_headings: Dict[str, Any] = {}
+                fam = headings_ov.get("family")
+                if isinstance(fam, str) and fam.strip():
+                    new_headings["font"] = fam.strip()
+                size_val = headings_ov.get("size_pt")
+                if isinstance(size_val, (int, float)) and size_val > 0:
+                    new_headings["size_pt"] = float(size_val)
+                if "bold" in headings_ov:
+                    new_headings["bold"] = bool(headings_ov.get("bold"))
+                if "italic" in headings_ov:
+                    new_headings["italic"] = bool(headings_ov.get("italic"))
+                if "all_caps" in headings_ov:
+                    new_headings["all_caps"] = bool(headings_ov.get("all_caps"))
+                so["Headings"] = new_headings
+                cfg["style_overrides"] = so
+            
+            # Footer style overrides
+            footer_ov = req.styles.get("footer")
+            if isinstance(footer_ov, dict):
+                new_footer: Dict[str, Any] = {}
+                fam = footer_ov.get("font_family")
+                if isinstance(fam, str) and fam.strip():
+                    new_footer["font_family"] = fam.strip()
+                size_val = footer_ov.get("size_pt")
+                if isinstance(size_val, (int, float)) and size_val > 0:
+                    new_footer["size_pt"] = float(size_val)
+                if "bold" in footer_ov:
+                    new_footer["bold"] = bool(footer_ov.get("bold"))
+                if "italic" in footer_ov:
+                    new_footer["italic"] = bool(footer_ov.get("italic"))
+                if new_footer:
+                    so = (cfg.get("style_overrides") or {}) or {}
+                    so["Footer"] = new_footer
+                    cfg["style_overrides"] = so
+        
+        save_config(cfg, req.config_path)
+        
+        out_cfg = (cfg.get("output", {}) or {})
+        out_dir = out_cfg.get("dir", "output")
+        os.makedirs(out_dir, exist_ok=True)
+        
+        result: Dict[str, Any] = {}
+        current_path = req.input
+        
+        # Step 1: Apply cover styles if requested
+        if req.apply_cover:
+            print(f"DEBUG: Applying cover styles with vision={req.vision}")
+            cover_res = run_cover_pipeline(
+                input_path=current_path,
+                config=cfg,
+                out_dir=out_dir,
+                dry_run=False,
+                no_layout=True,  # We'll apply layout after body styles
+                vision=bool(req.vision),
+            )
+            # Debug: log detection result
+            detection = cover_res.get("detection", {})
+            print(f"DEBUG: cover detection skip={detection.get('skip')}, warnings={detection.get('warnings')}, assignments={detection.get('assignments')}")
+            print(f"DEBUG: cover applied={cover_res.get('applied')}")
+            result["cover"] = cover_res
+            if cover_res.get("output_path"):
+                current_path = cover_res["output_path"]
+        
+        # Step 2: Apply body styles if requested
+        if req.apply_body:
+            print(f"DEBUG: Applying body styles")
+            body_res = apply_whole_document(
+                input_path=current_path,
+                config=cfg,
+            )
+            result["body"] = body_res
+            if body_res.get("output_path"):
+                current_path = body_res["output_path"]
+        
+        result["output_path"] = current_path
+        
+        # Step 3: TOC update + PDF generation via LibreOffice
+        if req.update_toc or True:  # Always generate PDF
+            print(f"DEBUG: TOC/PDF generation")
+            toc_cfg = (cfg.get("toc", {}) or {})
+            lo_cfg = (toc_cfg.get("libreoffice", {}) or {})
+            soffice_bin = lo_cfg.get("binary") or "soffice"
+            timeout = int(lo_cfg.get("timeout", 120))
+            use_docker = bool(lo_cfg.get("use_docker", True))
+            docker_image = lo_cfg.get("docker_image")
+            
+            if req.update_toc:
+                toc_mode = req.toc_mode or "structured"
+                toc_res = build_toc(input_path=current_path, config=cfg, mode=toc_mode)
+                pre_lo_path = toc_res.get("output_path")
+                if pre_lo_path:
+                    current_path = pre_lo_path
+                result["toc"] = toc_res
+            
+            # Convert via LibreOffice (updates TOC + generates PDF)
+            lo_res = run_libreoffice_convert(
+                current_path,
+                soffice=soffice_bin,
+                out_dir=out_dir,
+                timeout=timeout,
+                use_docker=use_docker,
+                docker_image=docker_image,
+            )
+            
+            if lo_res.get("ok"):
+                final_path = lo_res.get("output_path")
+                if final_path:
+                    result["output_path"] = final_path
+                pdf_path = lo_res.get("pdf_output_path")
+                if pdf_path:
+                    result["pdf_output_path"] = pdf_path
+                result["libreoffice_ok"] = True
+            else:
+                result["libreoffice_error"] = lo_res.get("error") or lo_res.get("stderr")
+        
+        # Step 4: Build ZIP with DOCX + PDF
+        docx_path = result.get("output_path")
+        pdf_path = result.get("pdf_output_path")
+        if docx_path and pdf_path:
+            zip_path = _build_single_zip(docx_path, pdf_path)
+            if zip_path:
+                result["zip_path"] = zip_path
+                download_meta = _build_download_meta(zip_path)
+                if download_meta:
+                    result["download"] = download_meta
+        elif docx_path:
+            download_meta = _build_download_meta(docx_path)
+            if download_meta:
+                result["download"] = download_meta
+        
+        return result
+    except Exception as e:
+        print(f"DEBUG: unified_apply error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 

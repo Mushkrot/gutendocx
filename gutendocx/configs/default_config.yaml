@@ -47,24 +47,24 @@ cover:
     title:
       name: "Cover Title"
       font:
-        family: "Times New Roman"
+        family: "Algerian"
         size_pt: 28
-        bold: true
-        all_caps: true
+        bold: false
+        all_caps: false
         align: center
     subtitle:
       name: "Cover Subtitle"
       font:
-        family: "Times New Roman"
-        size_pt: 18
+        family: "Castellar"
+        size_pt: 18.5
         bold: false
-        all_caps: true
+        all_caps: false
         align: center
     author:
       name: "Cover Author"
       font:
-        family: "Times New Roman"
-        size_pt: 16
+        family: "Castellar"
+        size_pt: 18.5
         bold: false
         all_caps: false
         align: center
@@ -82,12 +82,16 @@ style_overrides:
     align: "center"
     spacing_after_pt: 12
   Body:
-    font: "Times New Roman"
-    size_pt: 12
+    font: "Cambria"
+    size_pt: 18
     align: "justify"
-    line_spacing: 1.15
+    line_spacing: 1.08
     bold: false
     italic: false
+  Headings:
+    font: "Cambria"
+    size_pt: 18
+    all_caps: true
 
 remap_rules:
   Body:

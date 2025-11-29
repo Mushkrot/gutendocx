@@ -487,19 +487,25 @@ def run_cover_pipeline(input_path: str, config: Dict[str, Any], out_dir: str, dr
     doc = loader.open(input_path)
 
     use_vision = bool(vision or (((config.get("cover", {}) or {}).get("vision", {}) or {}).get("enabled", False)))
+    detection = None
     if use_vision:
         try:
             from .vision import detect_cover_roles_vision
             detection = detect_cover_roles_vision(input_path, config)
+            # If vision failed (skip=True), fallback to non-vision detection
+            if detection.get("skip"):
+                vision_warnings = detection.get("warnings", [])
+                print(f"DEBUG: Vision detection failed with warnings={vision_warnings}, falling back to non-vision")
+                detection = detect_cover_roles(doc, config)
+                detection["vision_fallback"] = True
+                detection.setdefault("warnings", []).extend(["vision_fallback"] + vision_warnings)
         except Exception as e:
-            detection = {
-                "cover_paragraph_indices": [],
-                "assignments": {},
-                "clusters": [],
-                "warnings": ["vision_failed", str(e)],
-                "skip": True,
-            }
-    else:
+            print(f"DEBUG: Vision exception: {e}, falling back to non-vision")
+            detection = detect_cover_roles(doc, config)
+            detection["vision_fallback"] = True
+            detection.setdefault("warnings", []).extend(["vision_exception", str(e)])
+    
+    if detection is None:
         detection = detect_cover_roles(doc, config)
     applied = {"changed": []}
     if not detection.get("skip"):
