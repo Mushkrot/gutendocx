@@ -1055,6 +1055,51 @@
     
     // Load fonts from server and init font dropdowns
     loadFonts();
+    
+    // Load config values and populate placeholders with real values
+    async function loadConfigDefaults() {
+      try {
+        const res = await fetch(api('/config'));
+        if (!res.ok) return;
+        const cfg = await res.json();
+        if (!cfg.ok) return;
+        
+        // Cover styles
+        const cover = cfg.cover || {};
+        if (cover.title) {
+          if (cover.title.family) $('titleFamily').placeholder = cover.title.family;
+          if (cover.title.size_pt) $('titleSize').placeholder = String(cover.title.size_pt);
+        }
+        if (cover.subtitle) {
+          if (cover.subtitle.family) $('subtitleFamily').placeholder = cover.subtitle.family;
+          if (cover.subtitle.size_pt) $('subtitleSize').placeholder = String(cover.subtitle.size_pt);
+        }
+        if (cover.author) {
+          if (cover.author.family) $('authorFamily').placeholder = cover.author.family;
+          if (cover.author.size_pt) $('authorSize').placeholder = String(cover.author.size_pt);
+        }
+        
+        // Body style
+        const body = cfg.body || {};
+        if (body.font) $('bodyFamily').placeholder = body.font;
+        if (body.size_pt) $('bodySize').placeholder = String(body.size_pt);
+        if (body.line_spacing) $('bodyLineSpacing').placeholder = String(body.line_spacing);
+        
+        // Headings style
+        const headings = cfg.headings || {};
+        if (headings.font) $('headingsFamily').placeholder = headings.font;
+        if (headings.size_pt) $('headingsSize').placeholder = String(headings.size_pt);
+        
+        // Footer style
+        const footer = cfg.footer || {};
+        if (footer.font_family) $('footerFamily').placeholder = footer.font_family;
+        if (footer.size_pt) $('footerSize').placeholder = String(footer.size_pt);
+        
+      } catch (e) {
+        console.warn('Failed to load config defaults:', e);
+      }
+    }
+    loadConfigDefaults();
     function populateSizeSelect(selId, inputId) {
       const sel = $(selId);
       sel.innerHTML = '';
@@ -1412,22 +1457,26 @@
         if (json.ok) {
           // Show what was learned
           const styles = json.styles || {};
-          let summary = 'Learned cover styles:\\n';
-          for (const [role, params] of Object.entries(styles)) {
+          let summary = '';
+          const roleOrder = ['title', 'subtitle', 'author'];
+          for (const role of roleOrder) {
+            const params = styles[role];
             if (params && Object.keys(params).length > 0) {
               const family = params.family || '(theme)';
-              const size = params.size_pt ? `${params.size_pt}pt` : '';
-              const text = params._paragraph_text || '';
-              summary += `  ${role}: ${family} ${size}\\n    "${text.substring(0, 50)}..."\\n`;
+              const size = params.size_pt ? `${params.size_pt}pt` : '—';
+              const roleName = role.charAt(0).toUpperCase() + role.slice(1);
+              summary += `• ${roleName}: ${family}, ${size}\n`;
             }
           }
           
           if (json.config_saved) {
-            summary += '\\nConfig saved to: ' + (json.config_path || 'config.yaml');
+            summary += '\nConfig saved to: ' + (json.config_path || 'config.yaml');
           }
           
           showToast('success', 'Cover styles learned and saved to config');
           alert(summary);
+          // Refresh placeholders with new config values
+          loadConfigDefaults();
         } else {
           showToast('error', json.error || 'Failed to learn styles');
         }

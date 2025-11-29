@@ -52,27 +52,18 @@ cover:
     title:
       name: Cover Title
       font:
-        family: Algerian
         size_pt: 28.0
-        bold: false
-        all_caps: false
-        align: center
+        family: Algerian
     subtitle:
       name: Cover Subtitle
       font:
-        family: Castellar
         size_pt: 18.5
-        bold: false
-        all_caps: false
-        align: center
+        family: Castellar
     author:
       name: Cover Author
       font:
-        family: Castellar
         size_pt: 18.5
-        bold: false
-        all_caps: false
-        align: center
+        family: Castellar
   normalize:
     collapse_misc_to_normal: false
     preserve_direct_formatting_on_misc: true

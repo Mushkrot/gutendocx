@@ -334,6 +334,29 @@ def health() -> Dict[str, Any]:
     return {"status": "ok", "time": int(time.time())}
 
 
+@app.get("/config")
+def get_config(config_path: str = None) -> Dict[str, Any]:
+    """Get current config values for UI display."""
+    try:
+        cfg = load_config(config_path)
+        # Extract relevant sections for UI
+        cover_styles = cfg.get("cover", {}).get("styles", {})
+        style_overrides = cfg.get("style_overrides", {})
+        return {
+            "ok": True,
+            "cover": {
+                "title": cover_styles.get("title", {}).get("font", {}),
+                "subtitle": cover_styles.get("subtitle", {}).get("font", {}),
+                "author": cover_styles.get("author", {}).get("font", {}),
+            },
+            "body": style_overrides.get("Body", {}),
+            "headings": style_overrides.get("Headings", {}),
+            "footer": style_overrides.get("Footer", {}),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.post("/config/learn_cover_styles")
 def config_learn_cover_styles(req: LearnCoverStylesRequest) -> Dict[str, Any]:
     """Learn cover styles from an existing document and optionally save to config.
