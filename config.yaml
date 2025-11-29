@@ -52,18 +52,27 @@ cover:
     title:
       name: Cover Title
       font:
-        size_pt: 28.0
         family: Algerian
+        size_pt: 28.0
+        bold: false
+        all_caps: false
+        align: center
     subtitle:
       name: Cover Subtitle
       font:
-        size_pt: 18.5
         family: Castellar
+        size_pt: 18.5
+        bold: false
+        all_caps: false
+        align: center
     author:
       name: Cover Author
       font:
-        size_pt: 18.5
         family: Castellar
+        size_pt: 18.5
+        bold: false
+        all_caps: false
+        align: center
   normalize:
     collapse_misc_to_normal: false
     preserve_direct_formatting_on_misc: true
@@ -77,16 +86,23 @@ style_overrides:
     align: center
     spacing_after_pt: 12
   Body:
+    size_pt: 18.0
     font: Cambria
-    size_pt: 18
-    align: justify
-    line_spacing: 1.08
-    bold: false
-    italic: false
   Headings:
     font: Cambria
-    size_pt: 18
+    size_pt: 13.5
     all_caps: true
+    bold: true
+  Heading2:
+    size_pt: 19.0
+    bold: true
+    font: Cambria
+  Heading3:
+    size_pt: 18.0
+    font: Cambria
+  Heading4:
+    size_pt: 18.0
+    font: Cambria
 remap_rules:
   Body:
   - Body Text

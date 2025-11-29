@@ -327,6 +327,7 @@ class LearnCoverStylesRequest(BaseModel):
     vision: bool = True
     config_path: Optional[str] = None
     save_config: bool = True  # Whether to save learned styles to config.yaml
+    min_confidence: Optional[float] = None
 
 
 @app.get("/health")
@@ -368,9 +369,17 @@ def config_learn_cover_styles(req: LearnCoverStylesRequest) -> Dict[str, Any]:
     
     Useful for creating a baseline config from an already-formatted document.
     """
-    print(f"DEBUG learn_cover_styles: input={req.input}, vision={req.vision}, save_config={req.save_config}")
+    print(f"DEBUG learn_cover_styles: input={req.input}, vision={req.vision}, save_config={req.save_config}, min_confidence={req.min_confidence}")
     try:
         cfg = load_config(req.config_path)
+        
+        # Apply min_confidence to config for vision detection
+        if req.min_confidence is not None:
+            c = cfg.get("cover", {}) or {}
+            v = c.get("vision", {}) or {}
+            v["min_confidence"] = float(req.min_confidence)
+            c["vision"] = v
+            cfg["cover"] = c
         
         result = learn_cover_styles(
             input_path=req.input,
@@ -421,6 +430,79 @@ def config_learn_cover_styles(req: LearnCoverStylesRequest) -> Dict[str, Any]:
         return result
     except Exception as e:
         print(f"DEBUG learn_cover_styles EXCEPTION: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class LearnBodyStylesRequest(BaseModel):
+    input: str
+    vision: bool = True
+    config_path: Optional[str] = None
+    save_config: bool = True
+    min_confidence: Optional[float] = None
+
+
+@app.post("/config/learn_body_styles")
+def config_learn_body_styles(req: LearnBodyStylesRequest) -> Dict[str, Any]:
+    """Learn body styles (headings and body text) from a document using AI Vision.
+    
+    This endpoint:
+    1. Finds pages with headings in the document
+    2. Renders 2-3 pages to PNG
+    3. Uses AI Vision to detect heading levels (heading1/2/3) and body text
+    4. Extracts style parameters from detected elements
+    5. Optionally saves to config.yaml
+    """
+    print(f"DEBUG learn_body_styles: input={req.input}, vision={req.vision}, save_config={req.save_config}, min_confidence={req.min_confidence}")
+    try:
+        from ..core.body_vision import learn_body_styles
+        
+        cfg = load_config(req.config_path)
+        
+        # Apply min_confidence to config
+        min_conf = req.min_confidence if req.min_confidence is not None else 0.6
+        
+        result = learn_body_styles(
+            input_path=req.input,
+            config=cfg,
+            vision=req.vision,
+            min_confidence=min_conf,
+        )
+        
+        print(f"DEBUG learn_body_styles result: ok={result.get('ok')}, styles={result.get('styles')}")
+        
+        if not result.get("ok"):
+            return result
+        
+        # If save_config is True, merge and save
+        if req.save_config:
+            config_update = result.get("config_update", {})
+            if config_update:
+                style_overrides = cfg.get("style_overrides", {}) or {}
+                new_overrides = config_update.get("style_overrides", {})
+                
+                print(f"DEBUG learn_body_styles: new_overrides = {new_overrides}")
+                
+                for role_key, role_data in new_overrides.items():
+                    # Skip if no data found for this role
+                    if not role_data:
+                        print(f"DEBUG learn_body_styles: SKIPPING {role_key} (no data)")
+                        continue
+                    print(f"DEBUG learn_body_styles: replacing {role_key} = {role_data}")
+                    style_overrides[role_key] = role_data
+                
+                cfg["style_overrides"] = style_overrides
+                
+                config_path = req.config_path or os.path.join(os.getcwd(), "config.yaml")
+                print(f"DEBUG learn_body_styles: saving to {config_path}")
+                save_config(cfg, config_path)
+                result["config_saved"] = True
+                result["config_path"] = config_path
+        
+        return result
+    except Exception as e:
+        print(f"DEBUG learn_body_styles EXCEPTION: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 

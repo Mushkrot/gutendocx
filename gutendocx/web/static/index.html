@@ -108,59 +108,44 @@
 </head>
 <body>
   <h1>GutenDocx — Cover UI (MVP)</h1>
-  <div class="row" style="display:flex; align-items:center; gap:16px;">
-    <button id="btnUpload" style="
-      padding: 10px 22px;
-      font-size: 15px;
-      font-weight: 600;
-      background: linear-gradient(135deg, #4a90d9 0%, #357abd 100%);
-      color: white;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      box-shadow: 0 2px 4px rgba(74,144,217,0.3);
-      transition: all 0.2s ease;
-    " onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(74,144,217,0.4)';"
-       onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 4px rgba(74,144,217,0.3)';">
-      📁 Upload files…
-    </button>
-    <span id="batchInfo" class="hint" style="display:none;"></span>
-    <button id="btnResetDefaults" style="
-      padding: 8px 16px;
-      font-size: 14px;
-      font-weight: 600;
-      background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%);
-      color: white;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      box-shadow: 0 2px 4px rgba(238,90,90,0.3);
-      transition: all 0.2s ease;
-      white-space: nowrap;
-    " onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(238,90,90,0.4)';"
-       onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 4px rgba(238,90,90,0.3)';">
-      ↺ Reset Defaults
-    </button>
-    <span class="hint">Reset all style overrides</span>
-    <button id="btnLearnCoverStyles" title="Detect cover roles and learn styles from this document into config.yaml" style="
-      padding: 8px 16px;
-      font-size: 14px;
-      font-weight: 600;
-      background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);
-      color: white;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      box-shadow: 0 2px 4px rgba(155,89,182,0.3);
-      transition: all 0.2s ease;
-      white-space: nowrap;
-      margin-left: 12px;
-    " onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(155,89,182,0.4)';"
-       onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 4px rgba(155,89,182,0.3)';">
-      🎓 Learn Cover Styles
-    </button>
-    <span class="hint">Extract cover styles from current file</span>
+  <!-- Action buttons grid -->
+  <div class="row" style="display:grid; grid-template-columns: 180px 220px 180px 220px; gap:8px 12px; align-items:center;">
+    <!-- Row 1 -->
+    <button id="btnUpload" class="action-btn action-btn-blue">📁 Upload files…</button>
+    <span class="hint action-hint">Select DOCX files to process</span>
+    <button id="btnResetDefaults" class="action-btn action-btn-red">↺ Reset Defaults</button>
+    <span class="hint action-hint">Reset all style overrides to defaults</span>
+    <!-- Row 2 -->
+    <button id="btnLearnCoverStyles" class="action-btn action-btn-purple" title="Detect cover roles and learn styles from this document into config.yaml">🎓 Learn Cover Styles</button>
+    <span class="hint action-hint">Extract title, subtitle, author styles</span>
+    <button id="btnLearnBodyStyles" class="action-btn action-btn-cyan" title="Detect headings and body text styles from this document into config.yaml">🎓 Learn Body Styles</button>
+    <span class="hint action-hint">Extract headings and body text styles</span>
   </div>
+  <span id="batchInfo" class="hint" style="display:none; margin-top:4px;"></span>
+  <style>
+    .action-btn {
+      padding: 9px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+      text-align: center;
+    }
+    .action-btn:hover { transform: translateY(-1px); }
+    .action-btn-blue { background: linear-gradient(135deg, #4a90d9 0%, #357abd 100%); box-shadow: 0 2px 4px rgba(74,144,217,0.3); }
+    .action-btn-blue:hover { box-shadow: 0 4px 8px rgba(74,144,217,0.4); }
+    .action-btn-red { background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%); box-shadow: 0 2px 4px rgba(238,90,90,0.3); }
+    .action-btn-red:hover { box-shadow: 0 4px 8px rgba(238,90,90,0.4); }
+    .action-btn-purple { background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); box-shadow: 0 2px 4px rgba(155,89,182,0.3); }
+    .action-btn-purple:hover { box-shadow: 0 4px 8px rgba(155,89,182,0.4); }
+    .action-btn-cyan { background: linear-gradient(135deg, #3498db 0%, #2980b9 100%); box-shadow: 0 2px 4px rgba(52,152,219,0.3); }
+    .action-btn-cyan:hover { box-shadow: 0 4px 8px rgba(52,152,219,0.4); }
+    .action-hint { font-size: 12px; color: #666; }
+  </style>
   <input id="inputPath" type="hidden" value="" />
   <input id="fileUpload" type="file" multiple webkitdirectory style="display:none;" />
   <input id="configPath" type="hidden" value="config.yaml" />
@@ -800,7 +785,13 @@
       }
       const count = data.files.length;
       el.style.display = '';
-      el.textContent = `Uploaded ${count} file(s)` + (data.batch_id ? ` (batch ${data.batch_id})` : '');
+      if (count === 1 && data.files[0] && data.files[0].name) {
+        // Single file - show filename
+        el.textContent = `Uploaded: ${data.files[0].name}`;
+      } else {
+        // Multiple files - show count
+        el.textContent = `Uploaded ${count} files`;
+      }
     }
 
     $("btnUpload").addEventListener('click', () => {
@@ -1442,7 +1433,8 @@
             input: inputPath,
             vision: useVision,
             config_path: configPath,
-            save_config: true
+            save_config: true,
+            min_confidence: parseFloat($("minConf").value)
           })
         });
         
@@ -1479,6 +1471,100 @@
           loadConfigDefaults();
         } else {
           showToast('error', json.error || 'Failed to learn styles');
+        }
+      } catch (e) {
+        $("output").value = String(e);
+        showToast('error', String(e));
+      } finally {
+        setBusy(false);
+        setButtonsDisabled(false);
+      }
+    });
+
+    // Learn Body Styles button handler
+    $("btnLearnBodyStyles").addEventListener('click', async () => {
+      const inputPath = $("inputPath").value.trim();
+      if (!inputPath) {
+        showToast('error', 'Please select a file first');
+        return;
+      }
+      
+      const configPath = $("configPath").value.trim() || 'config.yaml';
+      const useVision = $("vision") && $("vision").checked;
+      
+      setBusy(true, 'Learning body styles from document (analyzing pages with headings)…');
+      setButtonsDisabled(true);
+      
+      try {
+        const res = await fetch(api('/config/learn_body_styles'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            input: inputPath,
+            vision: useVision,
+            config_path: configPath,
+            save_config: true,
+            min_confidence: parseFloat($("minConf").value)
+          })
+        });
+        
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(`HTTP ${res.status}: ${txt}`);
+        }
+        
+        const json = await res.json();
+        $("output").value = JSON.stringify(json, null, 2);
+        
+        if (json.ok) {
+          // Show what was learned
+          const styles = json.styles || {};
+          const styleMapping = json.style_mapping || {};
+          let summary = 'Detected styles:\n\n';
+          const roleOrder = ['heading1', 'heading2', 'heading3', 'heading4', 'body'];
+          const roleNames = {
+            'heading1': 'Heading 1 (Chapters)',
+            'heading2': 'Heading 2 (Sections)',
+            'heading3': 'Heading 3 (Subsections)',
+            'heading4': 'Heading 4',
+            'body': 'Body Text'
+          };
+          const roleMappingKeys = {
+            'heading1': 'Headings',
+            'heading2': 'Heading2',
+            'heading3': 'Heading3',
+            'heading4': 'Heading4',
+            'body': 'Body'
+          };
+          let foundAny = false;
+          for (const role of roleOrder) {
+            const params = styles[role];
+            if (params && Object.keys(params).length > 0) {
+              foundAny = true;
+              const styleName = params._style_name || '(unknown)';
+              const family = params.family || '(theme)';
+              const size = params.size_pt ? `${params.size_pt}pt` : '—';
+              const roleName = roleNames[role] || role;
+              summary += `• ${roleName}:\n`;
+              summary += `   Word style: "${styleName}"\n`;
+              summary += `   Font: ${family}, ${size}\n\n`;
+            }
+          }
+          
+          if (!foundAny) {
+            summary = 'No styles detected. Try a document with clear chapter headings.';
+          }
+          
+          if (json.config_saved) {
+            summary += '\nConfig saved to: ' + (json.config_path || 'config.yaml');
+          }
+          
+          showToast('success', 'Body styles learned and saved to config');
+          alert(summary);
+          // Refresh placeholders with new config values
+          loadConfigDefaults();
+        } else {
+          showToast('error', json.error || 'Failed to learn body styles');
         }
       } catch (e) {
         $("output").value = String(e);
