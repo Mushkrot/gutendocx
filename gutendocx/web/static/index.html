@@ -142,6 +142,24 @@
       ↺ Reset Defaults
     </button>
     <span class="hint">Reset all style overrides</span>
+    <button id="btnLearnCoverStyles" title="Detect cover roles and learn styles from this document into config.yaml" style="
+      padding: 8px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(155,89,182,0.3);
+      transition: all 0.2s ease;
+      white-space: nowrap;
+      margin-left: 12px;
+    " onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(155,89,182,0.4)';"
+       onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 4px rgba(155,89,182,0.3)';">
+      🎓 Learn Cover Styles
+    </button>
+    <span class="hint">Extract cover styles from current file</span>
   </div>
   <input id="inputPath" type="hidden" value="" />
   <input id="fileUpload" type="file" multiple webkitdirectory style="display:none;" />
@@ -1018,17 +1036,8 @@
       // Mute sections that are not selected
       if (coverRow) coverRow.classList.toggle("muted", !coverChecked);
       if (wholeRow) wholeRow.classList.toggle("muted", !bodyChecked);
-      // Show/hide AI Vision options based on Cover checkbox
-      const confRow = document.getElementById("confRow");
-      const visionEl = $("vision");
-      const visionLabel = visionEl && visionEl.parentElement;
-      if (confRow) confRow.style.opacity = coverChecked ? 1 : 0.5;
-      if (visionEl) {
-        visionEl.disabled = !coverChecked;
-      }
-      if (visionLabel) {
-        visionLabel.style.opacity = coverChecked ? 1 : 0.5;
-      }
+      // AI Vision is always available (used by Learn Cover Styles and Apply Cover)
+      // No longer disabled based on Cover checkbox
     }
     $("scopeCover").addEventListener('change', updateScopeUI);
     $("scopeBody").addEventListener('change', updateScopeUI);
@@ -1357,6 +1366,71 @@
         });
         
         showToast('success', 'Configuration reset to defaults');
+      } catch (e) {
+        $("output").value = String(e);
+        showToast('error', String(e));
+      } finally {
+        setBusy(false);
+        setButtonsDisabled(false);
+      }
+    });
+
+    // Learn Cover Styles button handler
+    $("btnLearnCoverStyles").addEventListener('click', async () => {
+      const inputPath = $("inputPath").value.trim();
+      if (!inputPath) {
+        showToast('error', 'Please upload a file first');
+        return;
+      }
+      
+      const configPath = $("configPath").value.trim() || null;
+      const useVision = $("vision") && $("vision").checked;
+      
+      setBusy(true, 'Learning cover styles from document…');
+      setButtonsDisabled(true);
+      
+      try {
+        const res = await fetch(api('/config/learn_cover_styles'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            input: inputPath,
+            vision: useVision,
+            config_path: configPath,
+            save_config: true
+          })
+        });
+        
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(`HTTP ${res.status}: ${txt}`);
+        }
+        
+        const json = await res.json();
+        $("output").value = JSON.stringify(json, null, 2);
+        
+        if (json.ok) {
+          // Show what was learned
+          const styles = json.styles || {};
+          let summary = 'Learned cover styles:\\n';
+          for (const [role, params] of Object.entries(styles)) {
+            if (params && Object.keys(params).length > 0) {
+              const family = params.family || '(theme)';
+              const size = params.size_pt ? `${params.size_pt}pt` : '';
+              const text = params._paragraph_text || '';
+              summary += `  ${role}: ${family} ${size}\\n    "${text.substring(0, 50)}..."\\n`;
+            }
+          }
+          
+          if (json.config_saved) {
+            summary += '\\nConfig saved to: ' + (json.config_path || 'config.yaml');
+          }
+          
+          showToast('success', 'Cover styles learned and saved to config');
+          alert(summary);
+        } else {
+          showToast('error', json.error || 'Failed to learn styles');
+        }
       } catch (e) {
         $("output").value = String(e);
         showToast('error', String(e));

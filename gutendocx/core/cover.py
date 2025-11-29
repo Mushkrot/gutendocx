@@ -135,6 +135,343 @@ def _ensure_paragraph_style(doc: Document, style_name: str, font_cfg: Dict[str, 
     return style
 
 
+def extract_style_params(paragraph) -> Dict[str, Any]:
+    """Extract font/style parameters from a paragraph.
+    
+    Priority for font properties (family, size):
+    1. Direct formatting on runs (most specific - what user actually sees)
+    2. Paragraph style (fallback)
+    
+    For size_pt: uses maximum size across all runs (the dominant visual size).
+    
+    Returns dict with: family, size_pt, bold, italic, all_caps, small_caps, align
+    """
+    result: Dict[str, Any] = {}
+    
+    # FIRST: Try to get font info from runs (direct formatting takes priority)
+    # This is what the user actually sees in the document
+    if paragraph.runs:
+        # Collect all run sizes for debugging
+        run_info = []
+        first_valid_run = None
+        
+        for i, run in enumerate(paragraph.runs):
+            try:
+                rf = run.font
+                size = getattr(rf, "size", None)
+                sz_pt = _pt(size) if size is not None else 0.0
+                family = getattr(rf, "name", None)
+                text_preview = (run.text or "")[:20].replace("\n", " ")
+                run_info.append({"idx": i, "size_pt": sz_pt, "family": family, "text": text_preview})
+                
+                # Track first run with valid size and non-empty text
+                if first_valid_run is None and sz_pt > 0 and run.text and run.text.strip():
+                    first_valid_run = {
+                        "size_pt": sz_pt,
+                        "family": family,
+                        "bold": getattr(rf, "bold", None),
+                        "all_caps": getattr(rf, "all_caps", None),
+                    }
+            except Exception:
+                continue
+        
+        print(f"DEBUG extract_style_params: paragraph text preview='{(paragraph.text or '')[:50].replace(chr(10), ' ')}'")
+        print(f"DEBUG extract_style_params: run_info={run_info}")
+        print(f"DEBUG extract_style_params: first_valid_run={first_valid_run}")
+        
+        # Use FIRST valid run (not max) - this is typically the main content
+        if first_valid_run:
+            if first_valid_run["size_pt"] > 0:
+                result["size_pt"] = first_valid_run["size_pt"]
+            if first_valid_run["family"]:
+                result["family"] = first_valid_run["family"]
+            if first_valid_run["bold"] is not None:
+                result["bold"] = bool(first_valid_run["bold"])
+            if first_valid_run["all_caps"] is not None:
+                result["all_caps"] = bool(first_valid_run["all_caps"])
+    
+    # SECOND: Fallback to paragraph style for missing properties
+    style = getattr(paragraph, "style", None)
+    if style is not None:
+        try:
+            sf = style.font
+            # Font family - only if not found in runs
+            if "family" not in result:
+                family = getattr(sf, "name", None)
+                if family:
+                    result["family"] = family
+            
+            # Size - only if not found in runs
+            if "size_pt" not in result:
+                size = getattr(sf, "size", None)
+                if size is not None:
+                    result["size_pt"] = _pt(size)
+            
+            # Boolean attributes - only if not found in runs
+            if "bold" not in result:
+                bold = getattr(sf, "bold", None)
+                if bold is not None:
+                    result["bold"] = bool(bold)
+            
+            if "all_caps" not in result:
+                all_caps = getattr(sf, "all_caps", None)
+                if all_caps is not None:
+                    result["all_caps"] = bool(all_caps)
+        except Exception:
+            pass
+        
+        # Alignment from paragraph style
+        try:
+            pf = style.paragraph_format
+            align = getattr(pf, "alignment", None)
+            if align is not None:
+                if align == WD_ALIGN_PARAGRAPH.CENTER:
+                    result["align"] = "center"
+                elif align == WD_ALIGN_PARAGRAPH.RIGHT:
+                    result["align"] = "right"
+                elif align == WD_ALIGN_PARAGRAPH.LEFT:
+                    result["align"] = "left"
+                elif align == WD_ALIGN_PARAGRAPH.JUSTIFY:
+                    result["align"] = "justify"
+        except Exception:
+            pass
+    
+    # Fallback alignment from paragraph direct formatting
+    if "align" not in result:
+        try:
+            pf = paragraph.paragraph_format
+            align = getattr(pf, "alignment", None)
+            if align is not None:
+                if align == WD_ALIGN_PARAGRAPH.CENTER:
+                    result["align"] = "center"
+                elif align == WD_ALIGN_PARAGRAPH.RIGHT:
+                    result["align"] = "right"
+                elif align == WD_ALIGN_PARAGRAPH.LEFT:
+                    result["align"] = "left"
+                elif align == WD_ALIGN_PARAGRAPH.JUSTIFY:
+                    result["align"] = "justify"
+        except Exception:
+            pass
+    
+    return result
+
+
+def _find_run_style_by_text(doc, cover_paras: List, search_text: str) -> Dict[str, Any]:
+    """Find a run containing the search_text and return its style params.
+    
+    This handles cases where multiple roles (e.g. subtitle + author) are in one paragraph.
+    We search for the specific text from vision detection and read the style of matching runs.
+    """
+    if not search_text:
+        return {}
+    
+    # Normalize search text for matching
+    search_norm = re.sub(r'\s+', ' ', search_text.strip().upper())
+    if len(search_norm) < 3:
+        return {}
+    
+    # Use first few words for matching (AI might truncate)
+    search_words = search_norm.split()[:4]
+    search_prefix = ' '.join(search_words)
+    
+    print(f"DEBUG _find_run_style_by_text: searching for '{search_prefix[:30]}...'")
+    
+    for p in cover_paras:
+        for run in p.runs:
+            run_text = (run.text or "").strip()
+            if not run_text:
+                continue
+            run_norm = re.sub(r'\s+', ' ', run_text.upper())
+            
+            # Check if run contains the search text
+            # Run must be at least 3 chars and match significantly
+            if len(run_norm) < 3:
+                continue
+            if search_prefix in run_norm or (run_norm in search_prefix and len(run_norm) >= len(search_prefix) * 0.5):
+                # Use _run_size_pt which checks run style fallback
+                sz_pt = _run_size_pt(run)
+                
+                # If still 0, try paragraph style chain (including base styles)
+                if sz_pt == 0:
+                    try:
+                        pstyle = p.style
+                        while pstyle and sz_pt == 0:
+                            if pstyle.font and pstyle.font.size:
+                                sz_pt = _pt(pstyle.font.size)
+                                break
+                            pstyle = pstyle.base_style
+                    except Exception:
+                        pass
+                
+                rf = run.font
+                family = getattr(rf, "name", None)
+                
+                # If no family in run, try paragraph style chain
+                if not family:
+                    try:
+                        pstyle = p.style
+                        while pstyle and not family:
+                            if pstyle.font:
+                                family = getattr(pstyle.font, "name", None)
+                                if family:
+                                    break
+                            pstyle = pstyle.base_style
+                    except Exception:
+                        pass
+                
+                print(f"DEBUG _find_run_style_by_text: FOUND run '{run_text[:30]}' size={sz_pt}pt family={family}")
+                
+                if sz_pt > 0:
+                    result = {"size_pt": sz_pt}
+                    if family:
+                        result["family"] = family
+                    bold = getattr(rf, "bold", None)
+                    if bold is not None:
+                        result["bold"] = bool(bold)
+                    all_caps = getattr(rf, "all_caps", None)
+                    if all_caps is not None:
+                        result["all_caps"] = bool(all_caps)
+                    
+                    # Get alignment from paragraph
+                    try:
+                        align = p.alignment
+                        if align == WD_ALIGN_PARAGRAPH.CENTER:
+                            result["align"] = "center"
+                        elif align == WD_ALIGN_PARAGRAPH.RIGHT:
+                            result["align"] = "right"
+                        elif align == WD_ALIGN_PARAGRAPH.LEFT:
+                            result["align"] = "left"
+                    except Exception:
+                        pass
+                    
+                    return result
+    
+    return {}
+
+
+def learn_cover_styles(input_path: str, config: Dict[str, Any], vision: bool = True) -> Dict[str, Any]:
+    """Learn cover styles from an existing document.
+    
+    Uses AI vision detection to identify Title/Subtitle/Author elements visually,
+    then finds the corresponding runs by matching text and extracts their style parameters.
+    
+    This correctly handles cases where multiple roles are in one paragraph
+    (e.g., subtitle and author in same paragraph with different sizes).
+    
+    Returns:
+        Dict with 'styles' (extracted params), 'detection' (role assignments), 'config_update' (new config section)
+    """
+    loader = Loader()
+    doc = loader.open(input_path)
+    
+    # Run detection (same as in run_cover_pipeline)
+    use_vision = bool(vision or (((config.get("cover", {}) or {}).get("vision", {}) or {}).get("enabled", False)))
+    detection = None
+    
+    print(f"DEBUG learn_cover_styles: use_vision={use_vision}")
+    
+    if use_vision:
+        try:
+            from .vision import detect_cover_roles_vision
+            detection = detect_cover_roles_vision(input_path, config)
+            print(f"DEBUG learn_cover_styles: vision detection skip={detection.get('skip')}, warnings={detection.get('warnings')}")
+            if detection.get("skip"):
+                # Fallback to non-vision
+                print("DEBUG learn_cover_styles: vision returned skip=True, falling back to heuristics")
+                detection = detect_cover_roles(doc, config)
+                detection["vision_fallback"] = True
+        except Exception as e:
+            print(f"DEBUG learn_cover_styles: vision exception: {e}, falling back to heuristics")
+            detection = detect_cover_roles(doc, config)
+            detection["vision_fallback"] = True
+            detection.setdefault("warnings", []).append(f"vision_error: {e}")
+    
+    if detection is None:
+        detection = detect_cover_roles(doc, config)
+    
+    if detection.get("skip"):
+        return {
+            "ok": False,
+            "error": "Could not detect cover roles",
+            "detection": detection,
+            "styles": {},
+            "config_update": {},
+        }
+    
+    # Get cover paragraphs
+    cover_idxs = detection.get("cover_paragraph_indices", [])
+    cover_paras = [doc.paragraphs[i] for i in cover_idxs if i < len(doc.paragraphs)]
+    
+    extracted: Dict[str, Dict[str, Any]] = {
+        "title": {},
+        "subtitle": {},
+        "author": {},
+    }
+    
+    # If we have vision_items, use text matching to find exact runs
+    # This handles cases where subtitle+author are in one paragraph
+    vision_items = detection.get("vision_items", [])
+    
+    if vision_items:
+        print(f"DEBUG learn_cover_styles: using vision_items for text matching, {len(vision_items)} items")
+        for item in vision_items:
+            role = item.get("role", "").lower()
+            text = item.get("t_uc", "") or item.get("text", "")
+            
+            if role in ("title", "subtitle", "author") and text:
+                print(f"DEBUG learn_cover_styles: vision item role={role}, text='{text[:40]}...'")
+                params = _find_run_style_by_text(doc, cover_paras, text)
+                if params and not extracted[role]:
+                    extracted[role] = params
+                    extracted[role]["_vision_text"] = text[:50]
+    
+    # Fallback: if vision_items didn't give us all roles, use paragraph-level extraction
+    assignments = detection.get("assignments", {})
+    role_to_key = {
+        "Cover Title": "title",
+        "Cover Subtitle": "subtitle",
+        "Cover Author": "author",
+    }
+    
+    for idx in cover_idxs:
+        role = assignments.get(idx) or assignments.get(str(idx))
+        if role and role in role_to_key:
+            key = role_to_key[role]
+            if not extracted[key]:  # Only if not already found via vision_items
+                p = doc.paragraphs[idx]
+                params = extract_style_params(p)
+                if params:
+                    extracted[key] = params
+                    extracted[key]["_paragraph_index"] = idx
+                    extracted[key]["_paragraph_text"] = (p.text or "")[:100]
+    
+    print(f"DEBUG learn_cover_styles: extracted styles = {extracted}")
+    
+    # Build config update structure
+    config_update: Dict[str, Any] = {
+        "cover": {
+            "styles": {}
+        }
+    }
+    
+    for role_key in ("title", "subtitle", "author"):
+        params = extracted.get(role_key, {})
+        if params:
+            # Remove internal fields
+            clean_params = {k: v for k, v in params.items() if not k.startswith("_")}
+            if clean_params:
+                config_update["cover"]["styles"][role_key] = {
+                    "font": clean_params
+                }
+    
+    return {
+        "ok": True,
+        "detection": detection,
+        "styles": extracted,
+        "config_update": config_update,
+    }
+
+
 def _cluster_by_size(paras: List, delta_pct: float) -> List[List[int]]:
     if not paras:
         return []

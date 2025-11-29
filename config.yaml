@@ -44,7 +44,7 @@ cover:
     model: gpt-4o-mini
     fallback_enabled: false
     render_dpi: 220
-    env_path: ~/shared_env/.env
+    env_path: /opt/secure-configs/.env
     keep_rendered: true
     out_dir: output/vision
     min_confidence: 0.6
@@ -53,7 +53,7 @@ cover:
       name: Cover Title
       font:
         family: Algerian
-        size_pt: 28
+        size_pt: 28.0
         bold: false
         all_caps: false
         align: center

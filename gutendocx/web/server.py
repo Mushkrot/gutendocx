@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from gutendocx.core.config import load_config, save_config
-from gutendocx.core.cover import run_cover_pipeline
+from gutendocx.core.cover import run_cover_pipeline, learn_cover_styles
 from gutendocx.core.vision import detect_cover_roles_vision
 from gutendocx.core.whole import analyze_whole_document, apply_whole_document
 from gutendocx.core.toc import build_toc
@@ -322,9 +322,83 @@ class TocApplyRequest(BaseModel):
     batch_id: Optional[str] = None
 
 
+class LearnCoverStylesRequest(BaseModel):
+    input: str
+    vision: bool = True
+    config_path: Optional[str] = None
+    save_config: bool = True  # Whether to save learned styles to config.yaml
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     return {"status": "ok", "time": int(time.time())}
+
+
+@app.post("/config/learn_cover_styles")
+def config_learn_cover_styles(req: LearnCoverStylesRequest) -> Dict[str, Any]:
+    """Learn cover styles from an existing document and optionally save to config.
+    
+    This endpoint:
+    1. Uses AI vision (or heuristics) to detect Title/Subtitle/Author paragraphs
+    2. Extracts their font/style parameters
+    3. Optionally saves to config.yaml
+    
+    Useful for creating a baseline config from an already-formatted document.
+    """
+    print(f"DEBUG learn_cover_styles: input={req.input}, vision={req.vision}, save_config={req.save_config}")
+    try:
+        cfg = load_config(req.config_path)
+        
+        result = learn_cover_styles(
+            input_path=req.input,
+            config=cfg,
+            vision=req.vision,
+        )
+        
+        print(f"DEBUG learn_cover_styles result: ok={result.get('ok')}, styles={result.get('styles')}")
+        print(f"DEBUG learn_cover_styles config_update: {result.get('config_update')}")
+        
+        if not result.get("ok"):
+            print(f"DEBUG learn_cover_styles: NOT OK, returning early. error={result.get('error')}")
+            return result
+        
+        # If save_config is True, merge and save
+        if req.save_config:
+            config_update = result.get("config_update", {})
+            print(f"DEBUG learn_cover_styles: save_config=True, config_update keys={config_update.keys() if config_update else 'empty'}")
+            if config_update:
+                # Deep merge cover.styles
+                cover_cfg = cfg.get("cover", {}) or {}
+                styles_cfg = cover_cfg.get("styles", {}) or {}
+                
+                new_styles = config_update.get("cover", {}).get("styles", {})
+                print(f"DEBUG learn_cover_styles: new_styles to REPLACE = {new_styles}")
+                for role_key, role_data in new_styles.items():
+                    new_font = role_data.get("font", {}) or {}
+                    # Skip if no font data found for this role (keep existing config)
+                    if not new_font:
+                        print(f"DEBUG learn_cover_styles: SKIPPING role_key={role_key} (no font data found)")
+                        continue
+                    print(f"DEBUG learn_cover_styles: replacing role_key={role_key}, role_data={role_data}")
+                    if role_key in styles_cfg:
+                        # REPLACE font settings completely (not merge)
+                        styles_cfg[role_key]["font"] = new_font
+                    else:
+                        styles_cfg[role_key] = role_data
+                
+                cover_cfg["styles"] = styles_cfg
+                cfg["cover"] = cover_cfg
+                
+                config_path = req.config_path or os.path.join(os.getcwd(), "config.yaml")
+                print(f"DEBUG learn_cover_styles: saving to {config_path}")
+                save_config(cfg, config_path)
+                result["config_saved"] = True
+                result["config_path"] = config_path
+        
+        return result
+    except Exception as e:
+        print(f"DEBUG learn_cover_styles EXCEPTION: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/cover/analyze")
