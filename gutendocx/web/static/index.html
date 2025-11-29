@@ -1157,6 +1157,7 @@
             <input id="heading${level}Size" class="w-80" type="number" min="6" max="96" step="1" placeholder="${params.size_pt || '18'}" />
             <label><input id="heading${level}Bold" type="checkbox" ${params.bold ? 'checked' : ''} /> Bold</label>
             <label><input id="heading${level}Italic" type="checkbox" /> Italic</label>
+            <label><input id="heading${level}AllCaps" type="checkbox" ${params.all_caps ? 'checked' : ''} /> ALL CAPS</label>
           </div>
         `;
         container.appendChild(section);

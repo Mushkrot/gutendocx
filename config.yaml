@@ -86,16 +86,10 @@ style_overrides:
     align: center
     spacing_after_pt: 12
   Body:
-    font: Cambria
     size_pt: 18.0
-    align: justify
-    line_spacing: 1.08
-    bold: false
-    italic: false
-  Headings:
     font: Cambria
-    size_pt: 19.0
-    all_caps: true
+  Headings:
+    size_pt: 20.0
     bold: true
   Heading2:
     size_pt: 13.5
