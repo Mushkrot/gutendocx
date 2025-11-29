@@ -320,29 +320,33 @@
           </div>
         </div>
         <div class="card" id="cardBody">
-          <div class="inline"><label class="override"><input id="ovBody" type="checkbox" /> Override Body style</label></div>
-          <div class="inline">
-            <label>Family</label>
-            <input id="bodyFamily" class="w-280" type="text" placeholder="Times New Roman" />
-            <select id="bodyFontSel" class="w-280"></select>
-          </div>
-          <div class="inline">
-            <label>Size (pt)</label>
-            <input id="bodySize" class="w-120" type="number" min="6" max="96" step="1" placeholder="12" />
-            <select id="bodySizeSel" class="w-120"></select>
-            <label>Line spacing</label>
-            <input id="bodyLineSpacing" class="w-120" type="number" min="0.5" max="3" step="0.05" placeholder="1.15" />
-            <label>Align</label>
-            <select id="bodyAlign" class="w-120">
-              <option value="">(keep)</option>
-              <option value="left">left</option>
-              <option value="center">center</option>
-              <option value="right">right</option>
-              <option value="justify">justify</option>
-            </select>
-            <label><input id="bodyBold" type="checkbox" /> Bold</label>
-            <label><input id="bodyItalic" type="checkbox" /> Italic</label>
-          </div>
+          <details id="bodyDetails">
+            <summary style="cursor:pointer; font-weight:600;">Body Text <span id="bodySummaryInfo" class="hint" style="margin-left:8px; font-weight:normal;"></span></summary>
+            <div style="margin-top:12px; padding:8px; background:#f8fafc; border-radius:4px;">
+              <div class="inline">
+                <label>Family</label>
+                <input id="bodyFamily" class="w-280" type="text" placeholder="Times New Roman" />
+                <select id="bodyFontSel" class="w-280"></select>
+              </div>
+              <div class="inline">
+                <label>Size (pt)</label>
+                <input id="bodySize" class="w-120" type="number" min="6" max="96" step="1" placeholder="12" />
+                <select id="bodySizeSel" class="w-120"></select>
+                <label>Line spacing</label>
+                <input id="bodyLineSpacing" class="w-120" type="number" min="0.5" max="3" step="0.05" placeholder="1.15" />
+                <label>Align</label>
+                <select id="bodyAlign" class="w-120">
+                  <option value="">(keep)</option>
+                  <option value="left">left</option>
+                  <option value="center">center</option>
+                  <option value="right">right</option>
+                  <option value="justify">justify</option>
+                </select>
+                <label><input id="bodyBold" type="checkbox" /> Bold</label>
+                <label><input id="bodyItalic" type="checkbox" /> Italic</label>
+              </div>
+            </div>
+          </details>
           <div style="margin-top:8px; padding-top:8px; border-top:1px dashed #ddd;">
             <div class="inline">
               <label style="font-weight:600; color:#2563eb;"><input id="autoUpdateToc" type="checkbox" checked /> Update TOC after applying styles</label>
@@ -351,28 +355,29 @@
           </div>
         </div>
         <div class="card" id="cardHeadings">
-          <div class="inline"><label class="override"><input id="ovHeadings" type="checkbox" /> Override Chapter Headings style</label></div>
-          <div class="inline">
-            <label>Family</label>
-            <input id="headingsFamily" class="w-280" type="text" placeholder="Times New Roman" />
-            <select id="headingsFontSel" class="w-280"></select>
-          </div>
-          <div class="inline">
-            <label>Size (pt)</label>
-            <input id="headingsSize" class="w-120" type="number" min="6" max="96" step="1" placeholder="18" />
-            <select id="headingsSizeSel" class="w-120"></select>
-            <label>Align</label>
-            <select id="headingsAlign" class="w-120">
-              <option value="">(keep)</option>
-              <option value="left">left</option>
-              <option value="center">center</option>
-              <option value="right">right</option>
-              <option value="justify">justify</option>
-            </select>
-            <label><input id="headingsBold" type="checkbox" /> Bold</label>
-            <label><input id="headingsItalic" type="checkbox" /> Italic</label>
-            <label><input id="headingsAllCaps" type="checkbox" /> ALL CAPS</label>
-          </div>
+          <details id="headingsDetails">
+            <summary style="cursor:pointer; font-weight:600;">Headings <span id="headingsSummaryInfo" class="hint" style="margin-left:8px; font-weight:normal;"></span></summary>
+            <!-- Container for all heading levels (filled dynamically) -->
+            <div id="headingsContainer" style="margin-top:12px;">
+              <!-- Heading 1 (always shown) -->
+              <div class="heading-level" id="heading1Section" style="margin-bottom:12px; padding:8px; background:#f8fafc; border-radius:4px;">
+                <div class="inline" style="margin-bottom:4px;">
+                  <strong>Heading 1 (Chapters)</strong>
+                  <span id="heading1StyleInfo" class="hint" style="margin-left:8px;"></span>
+                </div>
+                <div class="inline">
+                  <label>Family</label>
+                  <input id="heading1Family" class="w-200" type="text" placeholder="Times New Roman" />
+                  <label>Size</label>
+                  <input id="heading1Size" class="w-80" type="number" min="6" max="96" step="1" placeholder="18" />
+                  <label><input id="heading1Bold" type="checkbox" /> Bold</label>
+                  <label><input id="heading1Italic" type="checkbox" /> Italic</label>
+                  <label><input id="heading1AllCaps" type="checkbox" /> ALL CAPS</label>
+                </div>
+              </div>
+              <!-- Heading 2, 3, 4 will be added here dynamically -->
+            </div>
+          </details>
         </div>
         <div class="card" id="cardFooter">
           <div class="inline"><label class="override"><input id="ovFooter" type="checkbox" /> Override Page Number style</label></div>
@@ -534,47 +539,27 @@
       const a = roleBlock('ovAuthor','authorFamily','authorSize','authorBold','authorAllCaps','authorAlign');
       if (a) styles.author = a;
 
-      // Whole-document Body style overrides (centralized formatting for main text)
-      // Only send properties that user explicitly set (non-empty values)
+      // Body style overrides - collect if user entered values
       const body = {};
-      if (document.getElementById('ovBody')?.checked) {
-        const fam = document.getElementById('bodyFamily')?.value.trim();
-        const sizeVal = parseFloat(document.getElementById('bodySize')?.value || '');
-        const align = document.getElementById('bodyAlign')?.value;
-        const lsVal = parseFloat(document.getElementById('bodyLineSpacing')?.value || '');
-        const boldEl = document.getElementById('bodyBold');
-        const italicEl = document.getElementById('bodyItalic');
-        // Only include family if user typed something (not placeholder)
-        if (fam) body.family = fam;
-        // Only include size if user entered a value
-        if (!Number.isNaN(sizeVal) && sizeVal > 0) body.size_pt = sizeVal;
-        // Only include line_spacing if user entered a value
-        if (!Number.isNaN(lsVal) && lsVal > 0) body.line_spacing = lsVal;
-        // Only include align if not "(keep)"
-        if (align && align !== 'keep') body.align = align;
-        // Only include bold/italic if checkbox is checked (true means apply bold/italic)
-        if (boldEl && boldEl.checked) body.bold = true;
-        if (italicEl && italicEl.checked) body.italic = true;
-      }
+      const bodyFam = document.getElementById('bodyFamily')?.value.trim();
+      const bodySizeVal = parseFloat(document.getElementById('bodySize')?.value || '');
+      const bodyAlign = document.getElementById('bodyAlign')?.value;
+      const bodyLsVal = parseFloat(document.getElementById('bodyLineSpacing')?.value || '');
+      const bodyBoldEl = document.getElementById('bodyBold');
+      const bodyItalicEl = document.getElementById('bodyItalic');
+      if (bodyFam) body.family = bodyFam;
+      if (!Number.isNaN(bodySizeVal) && bodySizeVal > 0) body.size_pt = bodySizeVal;
+      if (!Number.isNaN(bodyLsVal) && bodyLsVal > 0) body.line_spacing = bodyLsVal;
+      if (bodyAlign && bodyAlign !== '' && bodyAlign !== 'keep') body.align = bodyAlign;
+      if (bodyBoldEl && bodyBoldEl.checked) body.bold = true;
+      if (bodyItalicEl && bodyItalicEl.checked) body.italic = true;
       if (Object.keys(body).length) styles.body = body;
 
-      // Chapter Headings style overrides
-      const headings = {};
-      if (document.getElementById('ovHeadings')?.checked) {
-        const fam = document.getElementById('headingsFamily')?.value.trim();
-        const sizeVal = parseFloat(document.getElementById('headingsSize')?.value || '');
-        const align = document.getElementById('headingsAlign')?.value;
-        const boldEl = document.getElementById('headingsBold');
-        const italicEl = document.getElementById('headingsItalic');
-        const allCapsEl = document.getElementById('headingsAllCaps');
-        if (fam) headings.family = fam;
-        if (!Number.isNaN(sizeVal) && sizeVal > 0) headings.size_pt = sizeVal;
-        if (align && align !== 'keep') headings.align = align;
-        if (boldEl && boldEl.checked) headings.bold = true;
-        if (italicEl && italicEl.checked) headings.italic = true;
-        if (allCapsEl && allCapsEl.checked) headings.all_caps = true;
+      // Heading styles - collect from all levels (1, 2, 3, 4)
+      const headingStyles = collectHeadingStyles();
+      if (Object.keys(headingStyles).length) {
+        styles.headings = headingStyles;
       }
-      if (Object.keys(headings).length) styles.headings = headings;
 
       // Page Number (footer) style overrides
       const footer = {};
@@ -1095,6 +1080,122 @@
       }
     }
     loadConfigDefaults();
+    
+    // Populate UI with learned body styles from Learn Body Styles response
+    function populateLearnedBodyStyles(styles, styleMapping) {
+      if (!styles) return;
+      
+      const roleLabels = {
+        'heading1': 'Heading 1 (Chapters)',
+        'heading2': 'Heading 2 (Sections)',
+        'heading3': 'Heading 3 (Subsections)',
+        'heading4': 'Heading 4',
+        'body': 'Body Text'
+      };
+      
+      // Update Body style placeholders
+      if (styles.body) {
+        const body = styles.body;
+        if (body.family) $('bodyFamily').placeholder = body.family;
+        if (body.size_pt) $('bodySize').placeholder = String(body.size_pt);
+        // Update summary info
+        const bodySummary = $('bodySummaryInfo');
+        if (bodySummary && body._style_name) {
+          bodySummary.innerHTML = `Word style: "<b>${body._style_name}</b>" (${body.family || 'theme'}, ${body.size_pt || '—'}pt)`;
+        }
+        // Auto-open body details
+        $('bodyDetails').open = true;
+      }
+      
+      // Count found heading levels for summary
+      let foundCount = 0;
+      for (const role of ['heading1', 'heading2', 'heading3', 'heading4']) {
+        if (styles[role] && styles[role]._style_name) foundCount++;
+      }
+      
+      // Update summary info
+      const summaryInfo = $('headingsSummaryInfo');
+      if (summaryInfo) {
+        summaryInfo.innerHTML = foundCount > 0 ? `(${foundCount} levels detected)` : '';
+      }
+      
+      // Update Heading 1 placeholders
+      if (styles.heading1) {
+        const h1 = styles.heading1;
+        if (h1.family) $('heading1Family').placeholder = h1.family;
+        if (h1.size_pt) $('heading1Size').placeholder = String(h1.size_pt);
+        if (h1.bold) $('heading1Bold').checked = true;
+        if (h1.all_caps) $('heading1AllCaps').checked = true;
+        // Show Word style name
+        const h1Info = $('heading1StyleInfo');
+        if (h1Info && h1._style_name) {
+          h1Info.innerHTML = `Word style: "<b>${h1._style_name}</b>" (${h1.family || 'theme'}, ${h1.size_pt || '—'}pt)`;
+        }
+      }
+      
+      // Remove any existing dynamic heading sections (2, 3, 4)
+      const container = $('headingsContainer');
+      container.querySelectorAll('.heading-level-dynamic').forEach(el => el.remove());
+      
+      // Create dynamic heading sections (Heading 2, 3, 4) inside headingsContainer
+      for (const [role, level] of [['heading2', 2], ['heading3', 3], ['heading4', 4]]) {
+        const params = styles[role];
+        if (!params || !params._style_name) continue;
+        
+        const section = document.createElement('div');
+        section.className = 'heading-level heading-level-dynamic';
+        section.id = `heading${level}Section`;
+        section.style.cssText = 'margin-bottom:12px; padding:8px; background:#f8fafc; border-radius:4px;';
+        section.innerHTML = `
+          <div class="inline" style="margin-bottom:4px;">
+            <strong>${roleLabels[role]}</strong>
+            <span class="hint" style="margin-left:8px;">Word style: "<b>${params._style_name}</b>" (${params.family || 'theme'}, ${params.size_pt || '—'}pt)</span>
+          </div>
+          <div class="inline">
+            <label>Family</label>
+            <input id="heading${level}Family" class="w-200" type="text" placeholder="${params.family || 'Times New Roman'}" />
+            <label>Size</label>
+            <input id="heading${level}Size" class="w-80" type="number" min="6" max="96" step="1" placeholder="${params.size_pt || '18'}" />
+            <label><input id="heading${level}Bold" type="checkbox" ${params.bold ? 'checked' : ''} /> Bold</label>
+            <label><input id="heading${level}Italic" type="checkbox" /> Italic</label>
+          </div>
+        `;
+        container.appendChild(section);
+      }
+      
+      // Auto-open the Headings details if we found heading styles
+      if (foundCount > 0) {
+        $('headingsDetails').open = true;
+      }
+    }
+    
+    // Collect heading styles from all levels (1, 2, 3, 4)
+    function collectHeadingStyles() {
+      const result = {};
+      for (const level of [1, 2, 3, 4]) {
+        const famEl = $(`heading${level}Family`);
+        const sizeEl = $(`heading${level}Size`);
+        const boldEl = $(`heading${level}Bold`);
+        const italicEl = $(`heading${level}Italic`);
+        const allCapsEl = $(`heading${level}AllCaps`);
+        
+        if (!famEl) continue; // This level doesn't exist in UI
+        
+        const data = {};
+        if (famEl.value.trim()) data.family = famEl.value.trim();
+        const sizeVal = sizeEl ? parseFloat(sizeEl.value || '') : NaN;
+        if (!Number.isNaN(sizeVal) && sizeVal > 0) data.size_pt = sizeVal;
+        if (boldEl && boldEl.checked) data.bold = true;
+        if (italicEl && italicEl.checked) data.italic = true;
+        if (allCapsEl && allCapsEl.checked) data.all_caps = true;
+        
+        if (Object.keys(data).length) {
+          result[`heading${level}`] = data;
+        }
+      }
+      return result;
+    }
+    
     function populateSizeSelect(selId, inputId) {
       const sel = $(selId);
       sel.innerHTML = '';
@@ -1565,6 +1666,8 @@
           
           showToast('success', 'Body styles learned and saved to config');
           alert(summary);
+          // Populate UI with learned styles
+          populateLearnedBodyStyles(styles, json.style_mapping || {});
           // Refresh placeholders with new config values
           loadConfigDefaults();
         } else {
