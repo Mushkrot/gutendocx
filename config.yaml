@@ -93,8 +93,8 @@ style_overrides:
   Heading2:
     size_pt: 19.0
     bold: true
+    font: Cambria
   Heading3:
-    bold: true
     size_pt: 18.0
     font: Cambria
   Heading4:

@@ -56,7 +56,8 @@ def generate_style_report(doc: Document, max_samples: int = 3) -> Dict[str, Any]
             if sample not in rec["samples"]:
                 rec["samples"].append(sample)
         
-        # Character styles from runs
+        # Character styles from runs - include paragraph context for better understanding
+        para_style_name = p.style.name if p.style else "None"
         for run in p.runs:
             if run.style and run.style.name and run.style.name != "Default Paragraph Font":
                 run_text = (run.text or "").strip()
@@ -67,16 +68,26 @@ def generate_style_report(doc: Document, max_samples: int = 3) -> Dict[str, Any]
                     character_styles[char_style_name] = {
                         "count": 0,
                         "samples": [],
+                        "context_samples": [],  # Full paragraph context
+                        "parent_para_styles": set(),  # Which paragraph styles contain this char style
                     }
                 crec = character_styles[char_style_name]
                 crec["count"] += 1
+                crec["parent_para_styles"].add(para_style_name)
                 if len(crec["samples"]) < max_samples:
                     sample = run_text[:40] + ("..." if len(run_text) > 40 else "")
                     if sample not in crec["samples"]:
                         crec["samples"].append(sample)
+                # Also store full paragraph as context (more informative)
+                if len(crec["context_samples"]) < max_samples:
+                    context = text[:60] + ("..." if len(text) > 60 else "")
+                    if context not in crec["context_samples"]:
+                        crec["context_samples"].append(context)
     
-    # Sort by count
+    # Sort by count (convert sets to lists for JSON serialization)
     paragraph_styles = dict(sorted(paragraph_styles.items(), key=lambda x: x[1]["count"], reverse=True))
+    for crec in character_styles.values():
+        crec["parent_para_styles"] = list(crec.get("parent_para_styles", set()))
     character_styles = dict(sorted(character_styles.items(), key=lambda x: x[1]["count"], reverse=True))
     
     # Generate text report for AI
@@ -93,7 +104,13 @@ def generate_style_report(doc: Document, max_samples: int = 3) -> Dict[str, Any]
     if character_styles:
         for name, info in character_styles.items():
             samples_str = " | ".join(f'"{s}"' for s in info["samples"][:2])
-            report_lines.append(f'  - "{name}" ({info["count"]}x): {samples_str}')
+            # Include context for better understanding
+            context_str = ""
+            if info.get("context_samples"):
+                context_str = f' (in paragraphs like: "{info["context_samples"][0]}")'
+            parent_styles = info.get("parent_para_styles", [])
+            parent_str = f' [inside: {", ".join(parent_styles[:2])}]' if parent_styles else ""
+            report_lines.append(f'  - "{name}" ({info["count"]}x): {samples_str}{context_str}{parent_str}')
     else:
         report_lines.append("  (none found)")
     
@@ -741,6 +758,9 @@ def learn_body_styles(input_path: str, config: Dict[str, Any], vision: bool = Tr
     style_report = detection.get("style_report", {})
     all_doc_styles = {**style_report.get("paragraph_styles", {}), **style_report.get("character_styles", {})}
     
+    # Pre-process: get usage count for each style
+    all_doc_styles = {**style_report.get("paragraph_styles", {}), **style_report.get("character_styles", {})}
+    
     for item in items:
         role = item.get("role", "").lower()
         style_name = item.get("style_name")  # New: AI now returns style_name directly
@@ -750,9 +770,20 @@ def learn_body_styles(input_path: str, config: Dict[str, Any], vision: bool = Tr
         if role not in extracted:
             continue
         
-        # Skip if we already have a higher-confidence match
-        if extracted[role] and extracted[role].get("_confidence", 0) >= confidence:
-            continue
+        # Get usage count for this style
+        style_count = all_doc_styles.get(style_name, {}).get("count", 0)
+        existing_count = all_doc_styles.get(extracted[role].get("_style_name", ""), {}).get("count", 0) if extracted[role] else 0
+        
+        # Skip if we already have a better match:
+        # - Higher confidence wins
+        # - Same confidence: prefer style with MORE usage (more likely to be the right one)
+        if extracted[role]:
+            existing_conf = extracted[role].get("_confidence", 0)
+            if existing_conf > confidence:
+                continue
+            if existing_conf == confidence and existing_count > style_count:
+                # Existing style has more uses, keep it
+                continue
         
         params = {}
         
@@ -790,13 +821,49 @@ def learn_body_styles(input_path: str, config: Dict[str, Any], vision: bool = Tr
                             params["all_caps"] = style.font.all_caps
                         break
             
-            # If no font info from style definition, try to get from first paragraph with this style
-            if not params.get("size_pt") and not params.get("family"):
-                for p in doc.paragraphs[:100]:
-                    if p.style and p.style.name == style_name:
-                        para_params = _extract_paragraph_style(p, doc)
-                        params.update({k: v for k, v in para_params.items() if not k.startswith("_") and k not in params})
-                        break
+            # If no font family from style definition (theme fonts), try to get from actual usage
+            if not params.get("family"):
+                # For character styles, search runs; for paragraph styles, search paragraphs
+                if params.get("_style_type") == "character":
+                    # Search for runs with this character style
+                    # Skip cover-like paragraphs (first few, "No Spacing", etc.)
+                    for p in doc.paragraphs[5:350]:  # Skip first 5 paragraphs (likely cover)
+                        para_style_name = p.style.name if p.style else ""
+                        # Skip cover-like styles
+                        if para_style_name in ("No Spacing", "Title", "Subtitle"):
+                            continue
+                        for run in p.runs:
+                            if run.style and run.style.name == style_name:
+                                # Try run's direct font
+                                if run.font.name:
+                                    params["family"] = run.font.name
+                                    break
+                                # Try other runs in same paragraph
+                                for r2 in p.runs:
+                                    if r2.font.name:
+                                        params["family"] = r2.font.name
+                                        break
+                                # Try paragraph's style chain (for theme fonts)
+                                if not params.get("family"):
+                                    pstyle = p.style
+                                    while pstyle:
+                                        if pstyle.font and pstyle.font.name:
+                                            params["family"] = pstyle.font.name
+                                            break
+                                        pstyle = pstyle.base_style
+                        if params.get("family"):
+                            break
+                else:
+                    # For paragraph styles, search paragraphs
+                    for p in doc.paragraphs[:150]:
+                        if p.style and p.style.name == style_name:
+                            para_params = _extract_paragraph_style(p, doc)
+                            if para_params.get("family"):
+                                params["family"] = para_params["family"]
+                            if not params.get("size_pt") and para_params.get("size_pt"):
+                                params["size_pt"] = para_params["size_pt"]
+                            if params.get("family"):
+                                break  # Found font family, stop searching
         
         # Fallback: Find text in document (old approach)
         elif text:
@@ -831,6 +898,136 @@ def learn_body_styles(input_path: str, config: Dict[str, Any], vision: bool = Tr
             params["_text"] = text[:50] if text else ""
             extracted[role] = params
             print(f"DEBUG learn_body_styles: {role} -> style='{params.get('_style_name')}' (type={params.get('_style_type')}), params={params}")
+    
+    # POST-PROCESSING: Hybrid heuristic for character styles
+    # If heading1 is a paragraph style, look for character styles inside it
+    # that could be heading2 (e.g., "5 Text" inside "Heading 2" paragraphs)
+    h1_style = extracted.get("heading1", {}).get("_style_name")
+    h1_type = extracted.get("heading1", {}).get("_style_type")
+    h2_style = extracted.get("heading2", {}).get("_style_name")
+    h2_type = extracted.get("heading2", {}).get("_style_type")
+    
+    # Check if we should look for a character style for heading2
+    # Conditions: heading1 is paragraph style AND (heading2 is empty OR heading2 is also a paragraph style)
+    should_find_char_heading2 = (
+        h1_style and h1_type == "paragraph" and 
+        (not h2_style or h2_type == "paragraph")
+    )
+    
+    if should_find_char_heading2:
+        print(f"DEBUG post-processing: heading1='{h1_style}' (paragraph), heading2='{h2_style}' ({h2_type}) - looking for character styles")
+        char_styles = style_report.get("character_styles", {})
+        
+        for char_name, char_info in char_styles.items():
+            parent_styles = char_info.get("parent_para_styles", [])
+            # If this character style appears inside the heading1 paragraph style
+            if h1_style in parent_styles:
+                samples = char_info.get("samples", [])
+                context = char_info.get("context_samples", [])
+                print(f"DEBUG post-processing: found char style '{char_name}' inside '{h1_style}', samples={samples}")
+                
+                # Check if samples look like subtitles (short, capitalized words)
+                # Examples: "LINGUISTS.", "AUTHORS.", etc.
+                is_subtitle_like = any(
+                    len(s) < 30 and s.replace(".", "").replace(",", "").isupper() 
+                    for s in samples if s
+                )
+                
+                if is_subtitle_like:
+                    print(f"DEBUG post-processing: assigning '{char_name}' as heading2 (subtitle-like, overriding '{h2_style}')")
+                    # Extract font info from this character style
+                    params = {"_style_name": char_name, "_style_type": "character"}
+                    for style in doc.styles:
+                        if style.name == char_name and style.font:
+                            if style.font.size:
+                                params["size_pt"] = _pt(style.font.size)
+                            if style.font.name:
+                                params["family"] = style.font.name
+                            if style.font.bold is not None:
+                                params["bold"] = style.font.bold
+                            if style.font.all_caps is not None:
+                                params["all_caps"] = style.font.all_caps
+                            break
+                    # Fallback: get font from actual run with this character style
+                    # Skip cover-like paragraphs
+                    if not params.get("family"):
+                        for p in doc.paragraphs[5:350]:
+                            para_style_name = p.style.name if p.style else ""
+                            if para_style_name in ("No Spacing", "Title", "Subtitle"):
+                                continue
+                            for run in p.runs:
+                                if run.style and run.style.name == char_name:
+                                    if run.font.name:
+                                        params["family"] = run.font.name
+                                        break
+                                    # Try paragraph's style chain (for theme fonts)
+                                    pstyle = p.style
+                                    while pstyle:
+                                        if pstyle.font and pstyle.font.name:
+                                            params["family"] = pstyle.font.name
+                                            break
+                                        pstyle = pstyle.base_style
+                            if params.get("family"):
+                                break
+                    params["_confidence"] = 0.75  # Heuristic confidence
+                    params["_text"] = samples[0] if samples else ""
+                    extracted["heading2"] = params
+                    print(f"DEBUG post-processing: heading2 = {params}")
+                    break  # Take first matching character style
+    
+    # Also check: if heading1 is missing but there's a character style with "CHAPTER" samples
+    if not extracted.get("heading1"):
+        print(f"DEBUG post-processing: heading1 is empty - looking for character styles with CHAPTER")
+        char_styles = style_report.get("character_styles", {})
+        
+        for char_name, char_info in char_styles.items():
+            samples = char_info.get("samples", [])
+            context = char_info.get("context_samples", [])
+            
+            # Check if samples contain "CHAPTER" or Roman numerals
+            has_chapter = any("CHAPTER" in s.upper() for s in samples + context if s)
+            has_roman = any(s.strip() in ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"] for s in samples if s)
+            
+            if has_chapter or has_roman:
+                print(f"DEBUG post-processing: assigning '{char_name}' as heading1 (has CHAPTER/roman numerals)")
+                params = {"_style_name": char_name, "_style_type": "character"}
+                for style in doc.styles:
+                    if style.name == char_name and style.font:
+                        if style.font.size:
+                            params["size_pt"] = _pt(style.font.size)
+                        if style.font.name:
+                            params["family"] = style.font.name
+                        if style.font.bold is not None:
+                            params["bold"] = style.font.bold
+                        if style.font.all_caps is not None:
+                            params["all_caps"] = style.font.all_caps
+                        break
+                # Fallback: get font from actual run with this character style
+                # Skip cover-like paragraphs
+                if not params.get("family"):
+                    for p in doc.paragraphs[5:150]:
+                        para_style_name = p.style.name if p.style else ""
+                        if para_style_name in ("No Spacing", "Title", "Subtitle"):
+                            continue
+                        for run in p.runs:
+                            if run.style and run.style.name == char_name:
+                                if run.font.name:
+                                    params["family"] = run.font.name
+                                    break
+                                # Try paragraph's style chain (for theme fonts)
+                                pstyle = p.style
+                                while pstyle:
+                                    if pstyle.font and pstyle.font.name:
+                                        params["family"] = pstyle.font.name
+                                        break
+                                    pstyle = pstyle.base_style
+                        if params.get("family"):
+                            break
+                params["_confidence"] = 0.75
+                params["_text"] = samples[0] if samples else ""
+                extracted["heading1"] = params
+                print(f"DEBUG post-processing: heading1 = {params}")
+                break
     
     # Build config update with style overrides AND style mappings
     config_update = {
