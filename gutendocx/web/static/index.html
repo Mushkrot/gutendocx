@@ -905,8 +905,8 @@
       const bodySizeEl = document.getElementById('bodySize');
       const bodyFam = bodyFamEl && bodyFamEl.value ? bodyFamEl.value.trim() : '';
       const bodySizeVal = bodySizeEl ? parseFloat(bodySizeEl.value || '') : NaN;
-      const bodyOvEl = document.getElementById('ovBody');
-      const bodyOverrideOn = !!(bodyOvEl && bodyOvEl.checked);
+      // Body styles are always active now (no checkbox, using details)
+      const bodyOverrideOn = true;
 
       const sorted = specials.slice().sort((a, b) => {
         const ca = typeof a.count_runs === 'number' ? a.count_runs : 0;
@@ -1029,7 +1029,6 @@
       populateFontSelect('subtitleFontSel','subtitleFamily');
       populateFontSelect('authorFontSel','authorFamily');
       populateFontSelect('bodyFontSel','bodyFamily');
-      populateFontSelect('headingsFontSel','headingsFamily');
       populateFontSelect('footerFontSel','footerFamily');
     }
     
@@ -1065,10 +1064,10 @@
         if (body.size_pt) $('bodySize').placeholder = String(body.size_pt);
         if (body.line_spacing) $('bodyLineSpacing').placeholder = String(body.line_spacing);
         
-        // Headings style
+        // Headings style (Heading 1)
         const headings = cfg.headings || {};
-        if (headings.font) $('headingsFamily').placeholder = headings.font;
-        if (headings.size_pt) $('headingsSize').placeholder = String(headings.size_pt);
+        if (headings.font) $('heading1Family').placeholder = headings.font;
+        if (headings.size_pt) $('heading1Size').placeholder = String(headings.size_pt);
         
         // Footer style
         const footer = cfg.footer || {};
@@ -1224,26 +1223,20 @@
     populateSizeSelect('subtitleSizeSel','subtitleSize');
     populateSizeSelect('authorSizeSel','authorSize');
     populateSizeSelect('bodySizeSel','bodySize');
-    populateSizeSelect('headingsSizeSel','headingsSize');
     populateSizeSelect('footerSizeSel','footerSize');
+    // Cover role toggles (still using checkboxes)
     const toggleTitle = () => setRoleEnabled('title', $("ovTitle").checked);
     const toggleSubtitle = () => setRoleEnabled('subtitle', $("ovSubtitle").checked);
     const toggleAuthor = () => setRoleEnabled('author', $("ovAuthor").checked);
-    const toggleBody = () => setRoleEnabled('body', $("ovBody").checked);
-    const toggleHeadings = () => setRoleEnabled('headings', $("ovHeadings").checked);
     const toggleFooter = () => setRoleEnabled('footer', $("ovFooter").checked);
     $("ovTitle").addEventListener('change', toggleTitle);
     $("ovSubtitle").addEventListener('change', toggleSubtitle);
     $("ovAuthor").addEventListener('change', toggleAuthor);
-    $("ovBody").addEventListener('change', toggleBody);
-    $("ovHeadings").addEventListener('change', toggleHeadings);
     $("ovFooter").addEventListener('change', toggleFooter);
-    // start disabled by default
+    // start disabled by default (cover roles only)
     setRoleEnabled('title', false);
     setRoleEnabled('subtitle', false);
     setRoleEnabled('author', false);
-    setRoleEnabled('body', false);
-    setRoleEnabled('headings', false);
     setRoleEnabled('footer', false);
 
     function drawOverlay(items) {
@@ -1491,8 +1484,8 @@
         const json = await res.json();
         $("output").value = JSON.stringify(json, null, 2);
         
-        // Clear all override checkboxes
-        ['ovTitle', 'ovSubtitle', 'ovAuthor', 'ovBody', 'ovHeadings', 'ovFooter'].forEach(id => {
+        // Clear cover override checkboxes
+        ['ovTitle', 'ovSubtitle', 'ovAuthor', 'ovFooter'].forEach(id => {
           const el = document.getElementById(id);
           if (el) {
             el.checked = false;
