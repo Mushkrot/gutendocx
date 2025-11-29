@@ -504,12 +504,16 @@ Use ONLY style names that appear in the inventory above."""
             }
         ]
         
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0,
-            timeout=120,  # Longer timeout for combined analysis
-        )
+        # GPT-5 models don't support temperature=0
+        api_kwargs = {
+            "model": model,
+            "messages": messages,
+            "timeout": 120,  # Longer timeout for combined analysis
+        }
+        if not str(model).lower().startswith("gpt-5"):
+            api_kwargs["temperature"] = 0
+        
+        resp = client.chat.completions.create(**api_kwargs)
         
         txt = resp.choices[0].message.content if resp.choices else ""
         
