@@ -147,7 +147,7 @@
     .action-hint { font-size: 12px; color: #666; }
   </style>
   <input id="inputPath" type="hidden" value="" />
-  <input id="fileUpload" type="file" multiple webkitdirectory style="display:none;" />
+  <input id="fileUpload" type="file" multiple style="display:none;" />
   <input id="configPath" type="hidden" value="config.yaml" />
   <div class="row row-flex">
     <div class="field download-field" id="downloadRow" style="display:none;">
@@ -791,11 +791,30 @@
       if (!files.length) return;
 
       const fd = new FormData();
+      let addedCount = 0;
+      let skippedNames = [];
       for (const f of files) {
         const rel = f.webkitRelativePath || f.name;
         const base = (rel.split(/[\\/]/).pop() || '').trim();
-        if (!base.toLowerCase().endsWith('.docx') || base.startsWith('~$')) continue;
+        // Accept only .docx files, skip temp files (~$...)
+        if (!base.toLowerCase().endsWith('.docx') || base.startsWith('~$')) {
+          if (!base.startsWith('~$')) skippedNames.push(base);
+          continue;
+        }
         fd.append('files', f, rel);
+        addedCount++;
+      }
+
+      if (addedCount === 0) {
+        const msg = skippedNames.length > 0 
+          ? `No DOCX files selected. Skipped: ${skippedNames.slice(0, 5).join(', ')}${skippedNames.length > 5 ? '...' : ''}`
+          : 'No DOCX files selected. Please select .docx files.';
+        showToast('error', msg);
+        return;
+      }
+
+      if (skippedNames.length > 0) {
+        showToast('info', `Skipped ${skippedNames.length} non-DOCX file(s): ${skippedNames.slice(0, 3).join(', ')}${skippedNames.length > 3 ? '...' : ''}`);
       }
 
       setBusy(true, 'Uploading files…');

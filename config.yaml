@@ -41,7 +41,7 @@ cover:
     max_non_empty: 25
   vision:
     enabled: false
-    model: gpt-4o-mini
+    model: gpt-5-mini
     fallback_enabled: false
     render_dpi: 220
     env_path: /opt/secure-configs/.env
@@ -52,10 +52,8 @@ cover:
     title:
       name: Cover Title
       font:
-        family: Algerian
         size_pt: 28.0
-        bold: false
-        all_caps: false
+        family: Algerian
         align: center
     subtitle:
       name: Cover Subtitle
@@ -86,19 +84,22 @@ style_overrides:
     align: center
     spacing_after_pt: 12
   Body:
-    size_pt: 18.0
     font: Cambria
+    size_pt: 18.0
+    align: justify
+    line_spacing: 1.08
+    bold: false
+    italic: false
   Headings:
-    size_pt: 20.0
+    font: Cambria
+    size_pt: 19.0
+    all_caps: true
     bold: true
   Heading2:
     size_pt: 13.5
     font: Cambria
   Heading3:
     bold: true
-    size_pt: 18.0
-    font: Cambria
-  Heading4:
     size_pt: 18.0
     font: Cambria
 remap_rules:
