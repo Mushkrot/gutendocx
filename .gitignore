@@ -25,6 +25,7 @@ htmlcov/
 # Editors
 .vscode/
 .idea/
+.windsurf/
 
 # Project outputs
 gutendocx/out/
