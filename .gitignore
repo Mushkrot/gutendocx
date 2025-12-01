@@ -31,3 +31,7 @@ Simples/
 .config-libreoffice/
 gutenberg/
 Docs/*.docx
+
+# Local fonts (kept only on server, not in git)
+fonts/
+docker/libreoffice/fonts/
