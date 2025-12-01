@@ -25,3 +25,9 @@ gutendocx/out/
 reports/
 Uploads/
 output/
+
+# Local data and samples (excluded from VCS)
+Simples/
+.config-libreoffice/
+gutenberg/
+Docs/*.docx
