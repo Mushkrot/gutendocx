@@ -1,5 +1,11 @@
 # OS
 .DS_Store
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+.fseventsd
+._*
 
 # Python
 __pycache__/

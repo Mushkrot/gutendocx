@@ -66,6 +66,15 @@ def run_libreoffice_convert(
 
     project_root = os.path.abspath(os.getcwd())
 
+    # Determine fonts directory on the host. This can be overridden via
+    # the GUTENDOCX_FONTS_DIR environment variable to support Docker
+    # environments where the project root is not directly mountable.
+    fonts_dir_env = os.environ.get("GUTENDOCX_FONTS_DIR")
+    if fonts_dir_env:
+        fonts_dir_host = os.path.abspath(fonts_dir_env)
+    else:
+        fonts_dir_host = os.path.join(project_root, "fonts")
+
     docx_output_path = os.path.join(abs_out_dir, f"{base_root}.docx")
     pdf_output_path = os.path.join(abs_out_dir, f"{base_root}.pdf")
 
@@ -82,8 +91,11 @@ def run_libreoffice_convert(
         container_name = f"lo_worker_{uuid.uuid4().hex}"
         image = docker_image or DEFAULT_DOCKER_IMAGE
 
-        # Optional: mount local fonts directory into container, if present
-        fonts_dir = os.path.join(project_root, "fonts")
+        # Optional: mount local fonts directory into container, if present.
+        # We use the resolved host fonts directory so that it can live
+        # outside the project root (e.g. /root/gutendocx-fonts) when
+        # Docker cannot access /ai/gutendocx directly.
+        fonts_dir = fonts_dir_host
 
         # 1. Start container
         run_cmd = [

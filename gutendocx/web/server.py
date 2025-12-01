@@ -57,7 +57,9 @@ try:
 except Exception:
     pass
 
-FONTS_DIR = os.path.join(os.getcwd(), "fonts")
+FONTS_DIR = os.path.abspath(
+    os.environ.get("GUTENDOCX_FONTS_DIR") or os.path.join(os.getcwd(), "fonts")
+)
 
 
 def _get_available_fonts() -> List[str]:
