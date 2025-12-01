@@ -18,9 +18,6 @@ RUN apk add --no-cache \
     # Carlito (metric-compatible with Calibri)
     font-carlito
 
-# Copy custom fonts from host
-COPY fonts/ /usr/share/fonts/custom/
-
 # Rebuild font cache
 RUN fc-cache -f -v
 

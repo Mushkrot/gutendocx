@@ -81,13 +81,20 @@ def run_libreoffice_convert(
 
         container_name = f"lo_worker_{uuid.uuid4().hex}"
         image = docker_image or DEFAULT_DOCKER_IMAGE
-        
+
+        # Optional: mount local fonts directory into container, if present
+        fonts_dir = os.path.join(project_root, "fonts")
+
         # 1. Start container
         run_cmd = [
             "docker", "run", "-d", "--rm",
             "--name", container_name,
-            image
         ]
+        if os.path.isdir(fonts_dir):
+            run_cmd.extend([
+                "-v", f"{fonts_dir}:/usr/share/fonts/custom:ro",
+            ])
+        run_cmd.append(image)
         
         try:
             subprocess.run(run_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -122,10 +129,12 @@ def run_libreoffice_convert(
             pipe_to_container(abs_input, remote_input)
 
             # 3. Exec command
-            # Start soffice background (listening on port 2002), wait, run python
+            # Refresh font cache (in case /usr/share/fonts/custom is mounted),
+            # then start soffice background (listening on port 2002), wait, run python
             exec_cmd_str = (
-                f"soffice --headless --accept='socket,host=localhost,port=2002;urp;' > /dev/null 2>&1 & "
-                f"sleep 5 && "
+                "fc-cache -f -v >/dev/null 2>&1 || true; "
+                "soffice --headless --accept='socket,host=localhost,port=2002;urp;' > /dev/null 2>&1 & "
+                "sleep 5 && "
                 f"python3 {remote_script} {remote_input} {remote_output_pdf}"
             )
             
