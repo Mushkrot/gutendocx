@@ -6,6 +6,7 @@ import base64
 import json
 import time
 import re
+import unicodedata
 from typing import Any, Dict, Optional, List
 from docx import Document
 from .cover import _has_page_or_section_break, _is_empty_para, _is_decorative_line
@@ -143,7 +144,10 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
         prompt = (
             "Detect book cover roles strictly as JSON. "
             "Return: {\"items\":[{\"role\":\"title|subtitle|author\",\"bbox\":[x,y,w,h],\"confidence\":0.0,\"text\":\"...\"}...]} "
-            "Coordinates bbox are normalized in [0,1]. Provide text when readable. Do not invent Subtitle if absent."
+            "Coordinates bbox are normalized in [0,1]. Provide text when readable. "
+            "If the title spans multiple lines, return it as ONE item with role=title and text containing all title lines (use \\n between lines). "
+            "Only return role=subtitle if it is clearly separate from the title block (different visual block). "
+            "Do not invent Subtitle if absent."
         )
         last_err = None
         txt = ""
@@ -161,20 +165,35 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
             for attempt in range(3):
                 try:
                     if use_responses:
-                        resp = client.responses.create(
-                            model=model_try,
-                            input=[
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "input_text", "text": prompt},
-                                        {"type": "input_image", "image_url": data_url},
-                                    ],
-                                }
-                            ],
-                            temperature=0,
-                            response_format={"type": "json_object"},
-                        )
+                        try:
+                            resp = client.responses.create(
+                                model=model_try,
+                                input=[
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {"type": "input_text", "text": prompt},
+                                            {"type": "input_image", "image_url": data_url},
+                                        ],
+                                    }
+                                ],
+                                temperature=0,
+                                response_format={"type": "json_object"},
+                            )
+                        except TypeError:
+                            resp = client.responses.create(
+                                model=model_try,
+                                input=[
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {"type": "input_text", "text": prompt},
+                                            {"type": "input_image", "image_url": data_url},
+                                        ],
+                                    }
+                                ],
+                                temperature=0,
+                            )
                     else:
                         resp = client.chat.completions.create(
                             model=model_try,
@@ -390,16 +409,72 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
     role_name = {"title": "Cover Title", "subtitle": "Cover Subtitle", "author": "Cover Author"}
     assignments: Dict[int, str] = {}
     items_assigned: List[tuple[int, Dict[str, Any]]] = []
-    j = 0
+
+    def _fold_text(s: str) -> str:
+        t = (s or "").replace("’", "'").replace("‘", "'").replace("`", "'").replace("´", "'")
+        t = unicodedata.normalize("NFKD", t)
+        t = "".join(ch for ch in t if not unicodedata.combining(ch))
+        t = re.sub(r"\s+", " ", t).strip().upper()
+        return t
+
+    cand_text = {i: _fold_text(cover_paras[i].text) for i in cand_idxs}
+    items_mapped: Dict[int, List[Dict[str, Any]]] = {i: [] for i in cand_idxs}
+    used_text_mapping = False
     for it in norm_items:
-        while j < len(cand_idxs) and cand_idxs[j] in assignments:
+        it_txt = _fold_text(str(it.get("t_uc", "") or ""))
+        best_idx = None
+        best_score = -1.0
+        for idx in cand_idxs:
+            ptxt = cand_text.get(idx, "")
+            if not ptxt:
+                continue
+            score = 0.0
+            if it_txt and it_txt in ptxt:
+                score = 100.0 + min(1.0, float(len(it_txt)) / max(1.0, float(len(ptxt))))
+            elif it_txt:
+                itoks = set(re.findall(r"[A-Z0-9]+", it_txt))
+                ptoks = set(re.findall(r"[A-Z0-9]+", ptxt))
+                if itoks:
+                    score = 10.0 * (float(len(itoks & ptoks)) / float(len(itoks)))
+            if score > best_score:
+                best_score = score
+                best_idx = idx
+        if best_idx is not None and best_score >= 3.0:
+            items_mapped[best_idx].append(it)
+            used_text_mapping = True
+
+    if used_text_mapping:
+        for idx in cand_idxs:
+            its = items_mapped.get(idx) or []
+            if not its:
+                continue
+            roles = {str(x.get("role", "") or "").strip().lower() for x in its}
+            if "title" in roles:
+                assignments[idx] = "Cover Title"
+            elif "subtitle" in roles:
+                assignments[idx] = "Cover Subtitle"
+            elif "author" in roles:
+                assignments[idx] = "Cover Author"
+        for idx in list(assignments.keys()):
+            if assignments.get(idx) == "Cover Subtitle":
+                its = items_mapped.get(idx) or []
+                roles = {str(x.get("role", "") or "").strip().lower() for x in its}
+                if "title" in roles:
+                    assignments[idx] = "Cover Title"
+        for idx in cand_idxs:
+            for it in (items_mapped.get(idx) or []):
+                items_assigned.append((idx, it))
+    else:
+        j = 0
+        for it in norm_items:
+            while j < len(cand_idxs) and cand_idxs[j] in assignments:
+                j += 1
+            if j >= len(cand_idxs):
+                break
+            idx = cand_idxs[j]
+            assignments[idx] = role_name[it["role"]]
+            items_assigned.append((idx, it))
             j += 1
-        if j >= len(cand_idxs):
-            break
-        idx = cand_idxs[j]
-        assignments[idx] = role_name[it["role"]]
-        items_assigned.append((idx, it))
-        j += 1
 
     if not assignments:
         warnings.append("mapping_empty")
@@ -419,6 +494,31 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
         }
 
     have_author = any(v == "Cover Author" for v in assignments.values())
+
+    # If the model labeled everything as 'title', infer the author block from layout:
+    # split items by the largest vertical gap and demote the lower group to Cover Author.
+    if not have_author and len(items_assigned) >= 2:
+        items_sorted = sorted(items_assigned, key=lambda t: float((t[1] or {}).get("y", 0.0)))
+        ys = [float((it or {}).get("y", 0.0)) for _, it in items_sorted]
+        best_gap = 0.0
+        best_k = None
+        for k in range(len(ys) - 1):
+            gap = ys[k + 1] - ys[k]
+            if gap > best_gap:
+                best_gap = gap
+                best_k = k
+        # Require a meaningful visual separation between title block and author block.
+        if best_k is not None and best_gap >= 0.10:
+            lower = items_sorted[best_k + 1 :]
+            changed_any = False
+            for idx, it in lower:
+                if assignments.get(idx) == "Cover Title":
+                    assignments[idx] = "Cover Author"
+                    changed_any = True
+            if changed_any:
+                warnings.append("author_inferred_from_layout")
+
+    have_author = any(v == "Cover Author" for v in assignments.values())
     if not have_author and items_assigned:
         detect_cfg = (cover_cfg.get("detect", {}) or {})
         author_markers = [str(m).upper() for m in detect_cfg.get("author_markers", [])]
@@ -433,13 +533,33 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
                 score += 3
             if t_uc and bool(year_rx.search(t_uc)):
                 score += 1
-            if t_uc and (bool(re.match(r"^[A-Z][A-Za-z .,'\-]+$", t_uc)) or bool(re.match(r"^[A-Z .,'\-]+$", t_uc))) and len(t_uc) <= 60:
+            if t_uc and (bool(re.match(r"^[A-Z][A-Za-z .,'\\-]+$", t_uc)) or bool(re.match(r"^[A-Z .,'\\-]+$", t_uc))) and len(t_uc) <= 60:
                 score += 1
             if score > best[1]:
                 best = (idx, score)
         if best[0] is not None and best[1] >= 2:
             assignments[best[0]] = "Cover Author"
             warnings.append("author_promoted_by_text")
+
+    detect_cfg = (cover_cfg.get("detect", {}) or {})
+    author_markers = [_fold_text(str(m)) for m in (detect_cfg.get("author_markers", []) or [])]
+    have_author = any(v == "Cover Author" for v in assignments.values())
+    if have_author and author_markers:
+        author_idxs = sorted([idx for idx, v in assignments.items() if v == "Cover Author"])
+        if author_idxs:
+            first_author = author_idxs[0]
+            for idx in cand_idxs:
+                if idx >= first_author:
+                    continue
+                if first_author - idx > 2:
+                    continue
+                if assignments.get(idx) == "Cover Title":
+                    continue
+                t = _fold_text(cover_paras[idx].text)
+                if not t:
+                    continue
+                if any((m == t) or t.startswith(m + " ") or (m + " ") in t for m in author_markers if m):
+                    assignments[idx] = "Cover Author"
 
     return {
         "cover_paragraph_indices": list(range(len(cover_paras))),

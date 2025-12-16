@@ -749,6 +749,9 @@ def apply_cover_styles(doc: Document, detection: Dict[str, Any], config: Dict[st
     cover_idxs: List[int] = detection.get("cover_paragraph_indices", [])
 
     clear_roles = (norm_cfg.get("clear_direct_formatting_on_roles", {}) or {})
+    clear_title = bool(clear_roles.get("title", True))
+    clear_subtitle = bool(clear_roles.get("subtitle", False))
+    clear_author = bool(clear_roles.get("author", False))
 
     def _clear_runs(p):
         for r in p.runs:
@@ -784,15 +787,15 @@ def apply_cover_styles(doc: Document, detection: Dict[str, Any], config: Dict[st
         role = assignments.get(i)
         if role == "Cover Title":
             p.style = title_style
-            if bool(clear_roles.get("title", False)):
+            if clear_title:
                 _clear_runs(p)
         elif role == "Cover Subtitle":
             p.style = subtitle_style
-            if bool(clear_roles.get("subtitle", False)):
+            if clear_subtitle:
                 _clear_runs(p)
         elif role == "Cover Author":
             p.style = author_style
-            if bool(clear_roles.get("author", False)):
+            if clear_author:
                 _clear_runs(p)
         else:
             if norm_cfg.get("collapse_misc_to_normal", True):
