@@ -515,9 +515,14 @@ def _load_jobs_index() -> None:
             if not job or not job.get("id"):
                 continue
             if job.get("status") in ("queued", "running"):
-                job["status"] = "interrupted"
-                job["error"] = "Server restarted before this job completed"
-                job["finished_at"] = job.get("finished_at") or _now_ms()
+                job["status"] = "queued"
+                job["resume_after_restart"] = True
+                job["resumed_at"] = _now_ms()
+                files = job.get("files")
+                if isinstance(files, list):
+                    for f in files:
+                        if isinstance(f, dict) and f.get("status") == "running":
+                            f["status"] = "queued"
                 _save_job(job)
             JOB_INDEX[str(job["id"])] = job
 
@@ -633,6 +638,19 @@ def _update_job_file(job_id: Optional[str], index: int, **fields: Any) -> None:
         rec.update(fields)
         rec["updated_at"] = _now_ms()
         _save_job(job)
+
+
+def _get_job_file_record(index: int) -> Optional[Dict[str, Any]]:
+    job_id = _current_job_id()
+    if not job_id:
+        return None
+    with JOB_LOCK:
+        job = JOB_INDEX.get(job_id)
+        files = job.get("files") if isinstance(job, dict) else None
+        if not isinstance(files, list) or index < 0 or index >= len(files):
+            return None
+        rec = files[index]
+        return copy.deepcopy(rec) if isinstance(rec, dict) else None
 
 
 def _job_file_started(index: int, path: str, total: int) -> None:
@@ -779,6 +797,25 @@ def _run_apply_job(job_id: str) -> None:
 
 
 _load_jobs_index()
+
+
+@app.on_event("startup")
+def _resume_jobs_on_startup() -> None:
+    with JOB_LOCK:
+        resumable = [
+            str(job_id)
+            for job_id, job in JOB_INDEX.items()
+            if job.get("status") == "queued" and job.get("resume_after_restart")
+        ]
+        for job_id in resumable:
+            job = JOB_INDEX.get(job_id)
+            if not job:
+                continue
+            job["resume_after_restart"] = False
+            job["resumed_at"] = _now_ms()
+            _save_job(job)
+            JOB_EXECUTOR.submit(_run_apply_job, job_id)
+            _audit_event("job.resume.submitted", None, job_id=job_id)
 
 FONTS_DIR = os.path.abspath(
     os.environ.get("GUTENDOCX_FONTS_DIR") or os.path.join(os.getcwd(), "fonts")
@@ -2414,6 +2451,47 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
             cancelled = False
             _init_job_files(_current_job_id() or "", batch_files)
             for file_index, path in enumerate(batch_files):
+                existing_file = _get_job_file_record(file_index)
+                if isinstance(existing_file, dict) and existing_file.get("status") == "completed":
+                    out_ref = existing_file.get("output") if isinstance(existing_file.get("output"), dict) else {}
+                    pdf_ref = existing_file.get("pdf_output") if isinstance(existing_file.get("pdf_output"), dict) else {}
+                    out_path_existing = out_ref.get("path")
+                    pdf_path_existing = pdf_ref.get("path")
+                    if isinstance(out_path_existing, str) and os.path.exists(out_path_existing):
+                        resumed_result = {
+                            "output_path": out_path_existing,
+                            "resumed": True,
+                        }
+                        if isinstance(pdf_path_existing, str) and os.path.exists(pdf_path_existing):
+                            resumed_result["pdf_output_path"] = pdf_path_existing
+                        results.append({"input_path": path, "status": "completed", "result": resumed_result})
+                        zip_items.append(
+                            {
+                                "input_path": path,
+                                "output_path": out_path_existing,
+                                "pdf_path": pdf_path_existing if isinstance(pdf_path_existing, str) else None,
+                            }
+                        )
+                        report_rows.append(
+                            {
+                                "author": "",
+                                "title": "",
+                                "subtitle": "",
+                                "pages": _count_pdf_pages(pdf_path_existing if isinstance(pdf_path_existing, str) else None),
+                                "filename": os.path.basename(path),
+                                "status": "completed",
+                            }
+                        )
+                        _audit_event(
+                            "job.file.resumed",
+                            None,
+                            job_id=_current_job_id(),
+                            index=file_index,
+                            total=len(batch_files),
+                            input=_file_ref(path),
+                            output=_file_ref(out_path_existing),
+                        )
+                        continue
                 if _job_cancel_requested():
                     cancelled = True
                     _mark_job_remaining_cancelled(file_index, len(batch_files))

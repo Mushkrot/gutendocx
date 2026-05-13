@@ -42,6 +42,7 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Stage A hardening is implemented: job JSON tracks per-file `queued/running/completed/failed`, batch Apply supports partial success, and batch XLSX reports include `Status` and `Error`.
 - Stage B cleanup is implemented: `POST /jobs/cleanup` defaults to dry-run and can remove old finished jobs plus related output/upload artifacts under safe directories.
 - Stage C controls are implemented: `POST /jobs/{job_id}/cancel`, `POST /jobs/{job_id}/retry_failed`, and basic Web UI Cancel / Retry failed controls.
+- Stage D restart recovery is implemented: queued/running persisted jobs are resubmitted at startup; already completed files with existing output are skipped, while unfinished/running files are queued again.
 - Legacy `/batch/status/{batch_id}` remains available as a fallback/recovery endpoint.
 
 2026-05-13 OpenAI prompting/AI usage analysis:

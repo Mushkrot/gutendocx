@@ -139,6 +139,18 @@ curl -fsS -X POST http://127.0.0.1:8000/jobs/<job_id>/retry_failed
 
 The retry job uses the same Apply options but only the files with `failed` status, and writes to a retry batch id.
 
+## Restart Resume
+
+Queued/running jobs are persisted under `output/jobs/`. On service startup, any job that was still `queued` or `running` is requeued automatically.
+
+Resume is best-effort and file-level:
+
+- Files already marked `completed` are reused when their generated output still exists.
+- A file that was `running` during restart is moved back to `queued` and processed again.
+- Remaining queued files continue normally.
+
+This avoids throwing away a large batch after a restart and reduces duplicate AI processing for files that had already completed.
+
 Legacy recovery remains available for older synchronous `/apply` flows. Large synchronous batch Apply requests can exceed Cloudflare's request timeout even when the server continues processing and eventually writes the ZIP. The legacy UI recovery endpoint is:
 
 ```bash
