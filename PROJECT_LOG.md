@@ -59,6 +59,7 @@ Current iteration:
 | Git state | Clean after 2026-05-13 full commit/push except `config.yaml` may change during normal platform use |
 | Upload input | Normal multi-file `.docx` picker; do not use `webkitdirectory` for the main "Upload files" button unless adding a separate folder-upload flow |
 | Runtime config | `config.yaml` is user/runtime-editable; do not treat incidental diffs as code changes or revert automatically |
+| Audit log | `output/audit_events.jsonl` records user actions, selected options, file names/sizes, endpoint timings, outputs, and errors for diagnostics; do not log document contents |
 
 ## Completed Work
 
@@ -68,6 +69,11 @@ Current iteration:
 2. Added an explicit `.docx` accept filter to the upload input.
 3. Kept the server upload endpoint unchanged; it already accepts one or many DOCX files and preserves relative paths when provided.
 4. Verified local production service serves the updated static HTML without restart.
+5. Added structured audit logging for diagnostics:
+   - server-side request/action events in `output/audit_events.jsonl`;
+   - UI events for upload selection, Apply, TOC, Learn, Reset, Download, success and error paths;
+   - endpoint duration, selected options, batch/file metadata, output/download metadata, and error details.
+   - logs intentionally avoid document text/content and credential headers.
 
 ### 2026-05-12
 

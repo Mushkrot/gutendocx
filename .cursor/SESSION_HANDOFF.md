@@ -29,6 +29,7 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Server/security ownership: `/ai/SECURITY`.
 - App ownership: this repo.
 - `config.yaml` is intentionally modified by the platform during normal Web UI use. Treat its diffs as runtime/user state unless the task explicitly concerns config defaults or settings.
+- Diagnostic audit events are written to `output/audit_events.jsonl`. They should capture what the user clicked/tried, selected options, uploaded file metadata, endpoint timings, outputs, and errors without storing document contents.
 
 ## Recent Audit
 
@@ -53,6 +54,13 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - User clarified that `config.yaml` is expected to be edited by the platform during normal operation.
 - Do not treat incidental `config.yaml` diffs as an error.
 - Do not commit or revert `config.yaml` automatically; inspect whether the change belongs to the requested task.
+
+2026-05-13 diagnostic audit logging:
+
+- Added structured server and client audit events for uploads, analyze, apply, TOC apply, learn cover/body, reset, download, HTTP timings, and errors.
+- Main log file: `output/audit_events.jsonl`.
+- Purpose: diagnose client reports without needing the client to reconstruct every click/checkbox/file choice manually.
+- Privacy rule: log metadata and options only; do not log DOCX text/content or credential headers.
 
 2026-05-12 read-only security alignment audit:
 

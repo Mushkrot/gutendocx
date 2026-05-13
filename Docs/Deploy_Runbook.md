@@ -55,6 +55,30 @@ Expected:
 - Local `/health` returns OK.
 - Public unauthenticated request redirects to Cloudflare Access login.
 
+## Diagnostic Audit Log
+
+GutenDocx writes structured diagnostic events to:
+
+```text
+output/audit_events.jsonl
+```
+
+This log is intended to reconstruct what happened when a client reports a problem:
+
+- uploaded file names, relative paths, sizes, and batch ids;
+- selected UI options and style controls;
+- button/action events such as upload, Apply, Apply TOC, Learn Cover/Body, Reset, and Download;
+- API endpoint start/completion/error events with durations;
+- output/download paths and AI cost summaries.
+
+Privacy rule: audit logs may contain client file names and operational paths, but must not contain DOCX text/content or credential headers. Treat the log as sensitive operational data.
+
+Useful inspection command:
+
+```bash
+tail -n 200 output/audit_events.jsonl
+```
+
 ## Restart Procedure
 
 Use this only after a code/config change that requires a restart.

@@ -636,6 +636,76 @@
       return await res.json();
     }
 
+    function auditFileList(files) {
+      return Array.from(files || []).map(f => ({
+        name: f.name,
+        relative_path: f.webkitRelativePath || f.name,
+        size_bytes: f.size,
+        type: f.type || ''
+      }));
+    }
+
+    function auditBatchSummary() {
+      if (!currentBatch || !Array.isArray(currentBatch.files)) return null;
+      return {
+        batch_id: currentBatch.batch_id || null,
+        count: currentBatch.files.length,
+        files: currentBatch.files.map(f => ({
+          name: f && f.name,
+          rel_path: f && f.rel_path,
+          batch_rel_path: f && f.batch_rel_path,
+          size_bytes: f && f.size_bytes
+        }))
+      };
+    }
+
+    function auditPayloadSummary(payload) {
+      if (!payload || typeof payload !== 'object') return {};
+      const batchFiles = Array.isArray(payload.batch_files) ? payload.batch_files : [];
+      return {
+        input: payload.input || '',
+        batch_id: payload.batch_id || null,
+        batch_count: batchFiles.length,
+        batch_files: batchFiles,
+        options: {
+          vision: !!payload.vision,
+          no_layout: !!payload.no_layout,
+          model: payload.model || null,
+          apply_body: !!payload.apply_body,
+          apply_cover: !!payload.apply_cover,
+          update_toc: !!payload.update_toc,
+          toc_mode: payload.toc_mode || null,
+          min_confidence: payload.min_confidence
+        },
+        styles: payload.styles || {}
+      };
+    }
+
+    function auditClient(event, data = {}) {
+      const body = JSON.stringify({
+        event,
+        data: {
+          page: location.pathname,
+          batch: auditBatchSummary(),
+          ...data
+        }
+      });
+      try {
+        if (navigator.sendBeacon) {
+          const blob = new Blob([body], { type: 'application/json' });
+          if (navigator.sendBeacon(api('/events/client'), blob)) return;
+        }
+      } catch {}
+      try {
+        fetch(api('/events/client'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          keepalive: true
+        }).catch(() => {});
+      } catch {}
+    }
+
     function getPayload(opts = {}) {
       const { forceDryRun = false, includeDryRun = true, includeBatch = false } = opts;
       const styles = collectStyles();
@@ -716,7 +786,11 @@
 
     $("downloadBtn").addEventListener('click', () => {
       const meta = downloadState.meta;
-      if (!meta || !meta.url) return;
+      if (!meta || !meta.url) {
+        auditClient('download_rejected', { reason: 'no_download_meta' });
+        return;
+      }
+      auditClient('download_clicked', { download: meta });
       const link = document.createElement('a');
       link.href = meta.url.startsWith('http') ? meta.url : api(meta.url);
       if (meta.filename) link.download = meta.filename;
@@ -800,6 +874,7 @@
     $("btnUpload").addEventListener('click', () => {
       const inp = $("fileUpload");
       if (!inp) return;
+      auditClient('upload_picker_opened');
       inp.value = "";
       inp.click();
     });
@@ -807,11 +882,15 @@
     $("fileUpload").addEventListener('change', async (ev) => {
       const inputEl = ev.target;
       const files = Array.from(inputEl.files || []);
-      if (!files.length) return;
+      if (!files.length) {
+        auditClient('upload_selection_cancelled');
+        return;
+      }
 
       const fd = new FormData();
       let addedCount = 0;
       let skippedNames = [];
+      const selectedFiles = auditFileList(files);
       for (const f of files) {
         const rel = f.webkitRelativePath || f.name;
         const base = (rel.split(/[\\/]/).pop() || '').trim();
@@ -824,6 +903,11 @@
       }
 
       if (addedCount === 0) {
+        auditClient('upload_selection_rejected', {
+          selected_files: selectedFiles,
+          skipped_names: skippedNames,
+          reason: 'no_docx_files'
+        });
         const msg = skippedNames.length > 0
           ? `No DOCX files selected. Skipped: ${skippedNames.slice(0, 5).join(', ')}${skippedNames.length > 5 ? '...' : ''}`
           : 'No DOCX files selected. Please select .docx files.';
@@ -834,6 +918,11 @@
       if (skippedNames.length > 0) {
         showToast('info', `Skipped ${skippedNames.length} non-DOCX file(s): ${skippedNames.slice(0, 3).join(', ')}${skippedNames.length > 3 ? '...' : ''}`);
       }
+      auditClient('upload_started', {
+        selected_files: selectedFiles,
+        accepted_count: addedCount,
+        skipped_names: skippedNames
+      });
 
       setBusy(true, 'Uploading files…');
       setButtonsDisabled(true);
@@ -850,6 +939,11 @@
         const data = await res.json();
         currentBatch = data;
         uploadOk = true;
+        auditClient('upload_completed', {
+          batch_id: data.batch_id || null,
+          root: data.root || null,
+          files: data.files || []
+        });
 
         const first = (data.files && data.files[0]) || null;
         if (first && first.rel_path) {
@@ -861,6 +955,7 @@
       } catch (e) {
         currentBatch = null;
         updateBatchInfo(null);
+        auditClient('upload_error', { error: String(e), selected_files: selectedFiles });
         showToast('error', String(e));
       } finally {
         setBusy(false);
@@ -1346,6 +1441,7 @@
       const payload = getPayload({ forceDryRun: true, includeDryRun: true, includeBatch: false });
       // Always analyze whole document to get style info
       const path = '/whole/analyze';
+      auditClient('analyze_started', { endpoint: path, payload: auditPayloadSummary(payload) });
       $("output").value = `Running ${path}...`;
       setBusy(true, 'Analyzing…');
       setButtonsDisabled(true);
@@ -1355,9 +1451,15 @@
         $("output").value = JSON.stringify(json, null, 2);
         await maybeShowPreview(json);
         updateWholeUi(json);
+        auditClient('analyze_completed', {
+          endpoint: path,
+          ok: true,
+          summary: json && json.whole && json.whole.summary
+        });
         showToast('success', 'Analyze completed');
       } catch (e) {
         $("output").value = String(e);
+        auditClient('analyze_error', { endpoint: path, error: String(e) });
         showToast('error', String(e));
       } finally {
         setBusy(false);
@@ -1383,6 +1485,7 @@
       }
       
       console.log("DEBUG btnApply payload:", JSON.stringify(payload));
+      auditClient('apply_clicked', { payload: auditPayloadSummary(payload) });
       $("output").value = 'Running /apply...';
 
       // Reset any previous phase timer
@@ -1417,6 +1520,13 @@
         $("output").value = JSON.stringify(json, null, 2);
         await maybeShowPreview(json);
         renderSpentCost(json);
+        auditClient('apply_completed', {
+          ok: true,
+          output_path: json && json.output_path,
+          download: json && json.download,
+          ai_cost: json && json.ai_cost,
+          batch: json && json.batch ? { id: json.batch.id, count: json.batch.count } : null
+        });
         if (json && json.download) {
           updateDownloadUi(json.download);
           showToast('success', 'Your file is ready for download');
@@ -1427,6 +1537,7 @@
         }
       } catch (e) {
         $("output").value = String(e);
+        auditClient('apply_error', { payload: auditPayloadSummary(payload), error: String(e) });
         showToast('error', String(e));
       } finally {
         // Stop spinner and any pending phase switch
@@ -1468,6 +1579,7 @@
       }
       
       console.log("DEBUG btnTocApply payload:", JSON.stringify(payload));
+      auditClient('toc_apply_clicked', { payload });
 
       $("output").value = 'Running /toc/apply...';
       setBusy(true, 'Applying TOC…');
@@ -1476,6 +1588,12 @@
       try {
         const json = await callApi('/toc/apply', payload);
         $("output").value = JSON.stringify(json, null, 2);
+        auditClient('toc_apply_completed', {
+          ok: true,
+          output_path: json && json.output_path,
+          download: json && json.download,
+          batch: json && json.batch ? { id: json.batch.id, count: json.batch.count } : null
+        });
         if (json && json.download) {
           updateDownloadUi(json.download);
           showToast('success', 'TOC updated. File is ready for download');
@@ -1486,6 +1604,7 @@
         }
       } catch (e) {
         $("output").value = String(e);
+        auditClient('toc_apply_error', { payload, error: String(e) });
         showToast('error', String(e));
       } finally {
         setBusy(false);
@@ -1494,7 +1613,9 @@
     });
 
     $("btnResetDefaults").addEventListener('click', async () => {
+      auditClient('reset_defaults_clicked');
       if (!confirm('Reset all style settings to default values?\n\nThis will overwrite config.yaml with default configuration.')) {
+        auditClient('reset_defaults_cancelled');
         return;
       }
       
@@ -1533,8 +1654,10 @@
         });
         
         showToast('success', 'Configuration reset to defaults');
+        auditClient('reset_defaults_completed', { ok: true, config_path: json && json.config_path });
       } catch (e) {
         $("output").value = String(e);
+        auditClient('reset_defaults_error', { error: String(e) });
         showToast('error', String(e));
       } finally {
         setBusy(false);
@@ -1546,12 +1669,22 @@
     $("btnLearnCoverStyles").addEventListener('click', async () => {
       const inputPath = $("inputPath").value.trim();
       if (!inputPath) {
+        auditClient('learn_cover_rejected', { reason: 'no_input' });
         showToast('error', 'Please upload a file first');
         return;
       }
       
       const configPath = $("configPath").value.trim() || null;
       const useVision = $("vision") && $("vision").checked;
+      auditClient('learn_cover_clicked', {
+        input: inputPath,
+        options: {
+          vision: useVision,
+          config_path: configPath,
+          save_config: true,
+          min_confidence: parseFloat($("minConf").value)
+        }
+      });
       
       setBusy(true, 'Learning cover styles from document…');
       setButtonsDisabled(true);
@@ -1576,6 +1709,12 @@
         
         const json = await res.json();
         $("output").value = JSON.stringify(json, null, 2);
+        auditClient('learn_cover_completed', {
+          ok: !!(json && json.ok),
+          config_saved: !!(json && json.config_saved),
+          roles: json && json.styles ? Object.keys(json.styles) : [],
+          error: json && json.error
+        });
         
         if (json.ok) {
           // Show what was learned
@@ -1605,6 +1744,7 @@
         }
       } catch (e) {
         $("output").value = String(e);
+        auditClient('learn_cover_error', { input: inputPath, error: String(e) });
         showToast('error', String(e));
       } finally {
         setBusy(false);
@@ -1616,12 +1756,22 @@
     $("btnLearnBodyStyles").addEventListener('click', async () => {
       const inputPath = $("inputPath").value.trim();
       if (!inputPath) {
+        auditClient('learn_body_rejected', { reason: 'no_input' });
         showToast('error', 'Please select a file first');
         return;
       }
       
       const configPath = $("configPath").value.trim() || 'config.yaml';
       const useVision = $("vision") && $("vision").checked;
+      auditClient('learn_body_clicked', {
+        input: inputPath,
+        options: {
+          vision: useVision,
+          config_path: configPath,
+          save_config: true,
+          min_confidence: parseFloat($("minConf").value)
+        }
+      });
       
       setBusy(true, 'Learning body styles from document (analyzing pages with headings)…');
       setButtonsDisabled(true);
@@ -1646,6 +1796,13 @@
         
         const json = await res.json();
         $("output").value = JSON.stringify(json, null, 2);
+        auditClient('learn_body_completed', {
+          ok: !!(json && json.ok),
+          config_saved: !!(json && json.config_saved),
+          style_mapping: json && json.style_mapping,
+          roles: json && json.styles ? Object.keys(json.styles) : [],
+          error: json && json.error
+        });
         
         if (json.ok) {
           // Show what was learned
@@ -1701,6 +1858,7 @@
         }
       } catch (e) {
         $("output").value = String(e);
+        auditClient('learn_body_error', { input: inputPath, error: String(e) });
         showToast('error', String(e));
       } finally {
         setBusy(false);
