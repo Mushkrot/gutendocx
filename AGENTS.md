@@ -79,6 +79,15 @@ After non-trivial project work, update the relevant files:
 
 Do not update `.windsurf/`, Claude memory, or other dormant-agent mirrors unless the user explicitly asks.
 
+## Runtime Configuration State
+
+`config.yaml` is intentionally edited by the running platform during normal use when users learn/apply/update settings through the Web UI.
+
+- A local `config.yaml` diff is not automatically a problem and does not necessarily mean a developer changed code.
+- Before committing, inspect whether the `config.yaml` change is part of the requested work.
+- Do not include incidental user/runtime `config.yaml` changes in technical commits unless they are explicitly intended.
+- Do not automatically revert `config.yaml`; it may contain current user preferences.
+
 ## Verification Commands
 
 ```bash

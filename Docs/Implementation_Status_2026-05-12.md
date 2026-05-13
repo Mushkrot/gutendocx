@@ -16,6 +16,7 @@ This project is not a public discovery/SEO site. It is intended for one client p
 - Frontend: static single-page HTML/JS in `gutendocx/web/static/index.html`.
 - Core pipeline: `gutendocx/core/`.
 - Config: `config.yaml`, merged with embedded defaults under `gutendocx/configs/default_config.yaml`.
+- Runtime config state: `config.yaml` is intentionally edited by the platform during normal Web UI use. Its local diffs may represent current user settings, not developer code changes.
 - LibreOffice integration: Docker/PyUNO through `gutendocx/core/libreoffice_toc.py` and `gutendocx/scripts/lo_convert.py`.
 - Custom LibreOffice image: `gutendocx/libreoffice:latest`.
 - Fonts: local `fonts/` directory, not intended to be tracked in git.
@@ -69,7 +70,8 @@ This project is not a public discovery/SEO site. It is intended for one client p
 2. `Uploads/` and `output/` do not currently have a documented retention policy.
 3. Request path/config handling assumes trusted users behind Cloudflare Access. Do not remove Access without first hardening app-level auth and path validation.
 4. Built-in users/roles are a future roadmap item and would change the current Cloudflare Access-only app security model.
-5. Local docs are older and some historical files describe superseded LibreOffice macro approaches. Prefer `Docs/Integration_report 02.md` for the current LibreOffice/PyUNO architecture.
+5. `config.yaml` changes during normal use. Do not automatically commit or revert it without confirming the diff belongs to the requested work.
+6. Local docs are older and some historical files describe superseded LibreOffice macro approaches. Prefer `Docs/Integration_report 02.md` for the current LibreOffice/PyUNO architecture.
 
 ## Future Roadmap
 

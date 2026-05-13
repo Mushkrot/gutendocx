@@ -56,8 +56,9 @@ Current iteration:
 | Outputs | `Uploads/` and `output/` may contain client files and generated artifacts |
 | Server ops owner | `/ai/SECURITY` |
 | Port inventory | `/ai/PORTS.yaml` |
-| Git state | Clean after 2026-05-13 full commit/push |
+| Git state | Clean after 2026-05-13 full commit/push except `config.yaml` may change during normal platform use |
 | Upload input | Normal multi-file `.docx` picker; do not use `webkitdirectory` for the main "Upload files" button unless adding a separate folder-upload flow |
+| Runtime config | `config.yaml` is user/runtime-editable; do not treat incidental diffs as code changes or revert automatically |
 
 ## Completed Work
 

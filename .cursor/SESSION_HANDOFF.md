@@ -28,6 +28,7 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Runtime user: `root`, retained for now as a legacy compatibility constraint.
 - Server/security ownership: `/ai/SECURITY`.
 - App ownership: this repo.
+- `config.yaml` is intentionally modified by the platform during normal Web UI use. Treat its diffs as runtime/user state unless the task explicitly concerns config defaults or settings.
 
 ## Recent Audit
 
@@ -46,6 +47,12 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Includes AI usage/cost accounting, `gpt-5-mini` cover vision default, batch `/apply` processing, XLSX batch report generation, PDF page counting with `pypdf`, cover detection improvements, UI display of actual AI spend, and dependency updates.
 - `dev.sh` is now tracked as a development helper; do not use it as production launcher because it binds `0.0.0.0` with reload.
 - Production service was not restarted as part of this commit.
+
+2026-05-13 config state clarification:
+
+- User clarified that `config.yaml` is expected to be edited by the platform during normal operation.
+- Do not treat incidental `config.yaml` diffs as an error.
+- Do not commit or revert `config.yaml` automatically; inspect whether the change belongs to the requested task.
 
 2026-05-12 read-only security alignment audit:
 

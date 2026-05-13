@@ -26,6 +26,7 @@
 - Runtime remains `root` for legacy compatibility until the owner explicitly starts a migration/hardening project.
 - `Uploads/` and `output/` are operational data directories and may contain client files.
 - The primary Web UI upload control should remain a normal multi-file `.docx` picker for Windows compatibility. Use a separate clearly labeled control if folder upload is reintroduced.
+- `config.yaml` is operational/user-editable state and may be changed by the platform during normal use. Inspect diffs before committing, and do not revert it automatically.
 
 ## Future Planning Topics
 
