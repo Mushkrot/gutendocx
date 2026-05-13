@@ -67,6 +67,20 @@ Server-wide operations are owned by `/ai/SECURITY`:
 6. Before restarting production, inspect `systemctl status gutendocx`, confirm the app is localhost-bound, and verify locally with `curl http://127.0.0.1:8000/health`.
 7. The app has no built-in login. Its security boundary depends on Cloudflare Access plus localhost binding and the host firewall.
 
+## Risky Change QA Rule
+
+For important behavior changes that may improve one workflow but risk breaking or degrading another workflow, use a cautious before/after QA loop:
+
+1. Commit the current working state first, excluding incidental runtime `config.yaml` changes.
+2. Define several concrete tests that directly cover the intended change and key existing behavior that must not regress.
+3. Run the tests before the change and record the baseline result.
+4. Make the smallest scoped change.
+5. Run the same tests again and compare against the baseline.
+6. Keep the change only if it improves or preserves the target behavior without breaking existing behavior or dependencies.
+7. Revert or redesign the change if the comparison shows quality loss, new risk, or unclear benefit.
+
+For AI prompts/model behavior, do not change production prompts or defaults without first discussing the proposed change and the before/after test plan with the user.
+
 ## Documentation Rules
 
 After non-trivial project work, update the relevant files:

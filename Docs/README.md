@@ -10,6 +10,7 @@
 | --- | --- |
 | [Implementation_Status_2026-05-12.md](./Implementation_Status_2026-05-12.md) | Current project snapshot |
 | [Deploy_Runbook.md](./Deploy_Runbook.md) | Production checks, restart rules, security baseline |
+| [AI_Prompting_and_Usage_Analysis_2026-05-13.md](./AI_Prompting_and_Usage_Analysis_2026-05-13.md) | AI prompt/model usage analysis and QA rule for prompt/model changes |
 | [Project_overview.md](./Project_overview.md) | Architecture overview and current LibreOffice/PyUNO design |
 | [PRD.md](./PRD.md) | Historical product requirements |
 | [Integration_report 02.md](./Integration_report%2002.md) | Current LibreOffice/PyUNO integration report |
@@ -28,6 +29,7 @@
 - The primary Web UI upload control should remain a normal multi-file `.docx` picker for Windows compatibility. Use a separate clearly labeled control if folder upload is reintroduced.
 - `config.yaml` is operational/user-editable state and may be changed by the platform during normal use. Inspect diffs before committing, and do not revert it automatically.
 - Diagnostic audit events live in `output/audit_events.jsonl`; use them to reconstruct user actions/options/errors while treating them as sensitive operational metadata.
+- Official OpenAI prompt/model guide snapshots live in `Docs/OpenAI_Guides/`; refresh them before major prompt/model migration work.
 
 ## Future Planning Topics
 

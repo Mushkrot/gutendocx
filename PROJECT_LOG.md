@@ -12,6 +12,9 @@
 
 Current iteration:
 
+- Saved official OpenAI prompt/model guide snapshots under `Docs/OpenAI_Guides/`.
+- Added `Docs/AI_Prompting_and_Usage_Analysis_2026-05-13.md` covering current AI usage, prompt/model considerations, Cloudflare timeout architecture, and the required cautious QA rule for risky prompt/model/pipeline changes.
+- Added the risky-change QA rule to `AGENTS.md`: commit baseline first, define before/after tests, compare results, and discuss prompt/model changes before implementation.
 - Added `gpt-5.4-nano` to the Web UI model selector and backend AI cost table.
 - Refreshed the duplicated UI/backend model pricing table against OpenAI API docs as of 2026-05-13.
 - Removed the unverified `gpt-5.1-mini` UI/backend pricing entry; current official API docs list `gpt-5-mini`, `gpt-5.4-mini`, and `gpt-5.4-nano`, but not a general `gpt-5.1-mini` model.

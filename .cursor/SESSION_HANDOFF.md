@@ -33,6 +33,13 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 
 ## Recent Audit
 
+2026-05-13 OpenAI prompting/AI usage analysis:
+
+- Saved official OpenAI prompt/model guide snapshots under `Docs/OpenAI_Guides/`.
+- Added `Docs/AI_Prompting_and_Usage_Analysis_2026-05-13.md` with current AI usage map, prompt/model notes, Cloudflare timeout explanation, and AI optimization candidates.
+- Added a risky-change QA rule to `AGENTS.md`: commit current state first, define before/after tests, record baseline, make the smallest change, rerun the same tests, compare results, and keep only changes with clear benefit/no regression.
+- Do not change production prompts/model defaults without first discussing the proposal and QA plan with the user.
+
 2026-05-13 AI model/pricing refresh:
 
 - Added `gpt-5.4-nano` to the Web UI model selector and backend cost accounting table.
