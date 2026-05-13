@@ -62,6 +62,12 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Purpose: diagnose client reports without needing the client to reconstruct every click/checkbox/file choice manually.
 - Privacy rule: log metadata and options only; do not log DOCX text/content or credential headers.
 
+2026-05-13 client-test repairs:
+
+- Fixed heading override flow: nested UI heading controls are normalized server-side, learned `detected_style_mapping` is saved, and whole-document apply uses mapped styles such as `Para 08` instead of only built-in `Heading*` styles.
+- Added `GET /batch/status/{batch_id}` plus UI polling after `HTTP 524`, so large batch results can be recovered when Cloudflare times out while the server continues processing.
+- Verified `/batch/status/batch_1778675324` returns ready/download metadata for the client's 6-file batch that produced a 524 screenshot.
+
 2026-05-12 read-only security alignment audit:
 
 - `gutendocx.service` is active and listens on `127.0.0.1:8000`.

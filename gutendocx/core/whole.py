@@ -316,6 +316,12 @@ def _apply_body_style_overrides(doc: Document, config: Dict[str, Any], body_star
         "Cover Title", "Cover Subtitle", "Cover Author",
         "Header", "Footer",
     }
+    detected_mapping = (config or {}).get("detected_style_mapping", {}) or {}
+    detected_heading_names = {
+        str(v)
+        for k, v in detected_mapping.items()
+        if str(k) in ("Headings", "Heading1", "Heading2", "Heading3", "Heading4") and v
+    }
 
     changes: Dict[str, Any] = {}
     paragraphs_modified = 0
@@ -341,7 +347,7 @@ def _apply_body_style_overrides(doc: Document, config: Dict[str, Any], body_star
         style = getattr(p, "style", None)
         name = _style_name(style)
         if name:
-            if name in protected_names or name.startswith("Heading ") or name.lower().startswith("toc"):
+            if name in protected_names or name.startswith("Heading ") or name in detected_heading_names or name.lower().startswith("toc"):
                 continue
 
         modified = False
@@ -438,54 +444,84 @@ def _apply_body_style_overrides(doc: Document, config: Dict[str, Any], body_star
 def _apply_headings_style_overrides(doc: Document, config: Dict[str, Any], body_start: int) -> Dict[str, Any]:
     """Apply overrides to Heading paragraphs (chapter titles).
     
-    This applies formatting to paragraphs with Heading 1, Heading 2, etc. styles.
-    Only explicitly specified properties are changed.
+    This applies formatting to paragraphs mapped to heading roles. In addition
+    to built-in Heading 1/2/3/4 styles, it respects detected_style_mapping from
+    Learn Body Styles, because Gutenberg DOCX files often use custom style
+    names like Para 04 or Para 08 for headings.
     """
     so = (config or {}).get("style_overrides", {}) or {}
-    headings_ov = so.get("Headings", {}) or {}
-    
-    font_name = headings_ov.get("font") or headings_ov.get("family")
-    size_pt = headings_ov.get("size_pt")
-    align = headings_ov.get("align")
-    bold = headings_ov.get("bold")
-    italic = headings_ov.get("italic")
-    all_caps = headings_ov.get("all_caps")
-    
-    if not any(
-        v is not None
-        for v in (font_name, size_pt, align, bold, italic, all_caps)
-    ):
+    detected_mapping = (config or {}).get("detected_style_mapping", {}) or {}
+
+    role_keys = ("Headings", "Heading2", "Heading3", "Heading4")
+    default_style_names = {
+        "Headings": ["Heading 1", "Heading1", "Heading 2", "Heading2", "Heading 3", "Heading3", "Heading 4", "Heading4"],
+        "Heading2": ["Heading 2", "Heading2"],
+        "Heading3": ["Heading 3", "Heading3"],
+        "Heading4": ["Heading 4", "Heading4"],
+    }
+
+    role_overrides: Dict[str, Dict[str, Any]] = {}
+    for role in role_keys:
+        ov = so.get(role, {}) or {}
+        if isinstance(ov, dict) and any(v is not None for v in ov.values()):
+            role_overrides[role] = ov
+
+    if not role_overrides:
         return {"applied": False, "changes": {}, "paragraphs_modified": 0}
-    
+
+    style_to_role: Dict[str, str] = {}
+    for role, ov in role_overrides.items():
+        mapped = detected_mapping.get(role)
+        if mapped:
+            style_to_role[str(mapped)] = role
+        for name in default_style_names.get(role, []):
+            style_to_role.setdefault(name, role)
+
     changes: Dict[str, Any] = {}
     paragraphs_modified = 0
-    
-    # Compute alignment value once
-    align_val = None
-    if isinstance(align, str) and align:
+
+    def _align_value(align: Any):
+        if not isinstance(align, str) or not align:
+            return None
         a = align.lower()
         if a == "left":
-            align_val = WD_ALIGN_PARAGRAPH.LEFT
-        elif a == "center":
-            align_val = WD_ALIGN_PARAGRAPH.CENTER
-        elif a == "right":
-            align_val = WD_ALIGN_PARAGRAPH.RIGHT
-        elif a == "justify":
-            align_val = WD_ALIGN_PARAGRAPH.JUSTIFY
-    
+            return WD_ALIGN_PARAGRAPH.LEFT
+        if a == "center":
+            return WD_ALIGN_PARAGRAPH.CENTER
+        if a == "right":
+            return WD_ALIGN_PARAGRAPH.RIGHT
+        if a == "justify":
+            return WD_ALIGN_PARAGRAPH.JUSTIFY
+        return None
+
     for idx, p in enumerate(doc.paragraphs):
         if idx < body_start:
             continue
-        
-        # Only apply to Heading styles
+
         style = getattr(p, "style", None)
         name = _style_name(style)
-        if not name or not name.startswith("Heading"):
+        role = style_to_role.get(name or "")
+        if not role:
+            # Backward-compatible fallback: old configs only had Headings.
+            if name and name.startswith("Heading") and "Headings" in role_overrides:
+                role = "Headings"
+            else:
+                continue
+
+        ov = role_overrides.get(role, {})
+        font_name = ov.get("font") or ov.get("family")
+        size_pt = ov.get("size_pt")
+        align = ov.get("align")
+        bold = ov.get("bold")
+        italic = ov.get("italic")
+        all_caps = ov.get("all_caps")
+        align_val = _align_value(align)
+
+        if not any(v is not None for v in (font_name, size_pt, align, bold, italic, all_caps)):
             continue
-        
+
         modified = False
-        
-        # Apply font-level overrides to each run
+
         if font_name or size_pt is not None or bold is not None or italic is not None or all_caps is not None:
             for r in p.runs:
                 try:
@@ -508,45 +544,55 @@ def _apply_headings_style_overrides(doc: Document, config: Dict[str, Any], body_
                             pass
                         if "font_family" not in changes:
                             changes["font_family"] = font_name
+                        changes.setdefault("roles", {}).setdefault(role, {})["font_family"] = font_name
                         modified = True
                     if isinstance(size_pt, (int, float)) and size_pt > 0:
                         f.size = Pt(float(size_pt))
                         if "size_pt" not in changes:
                             changes["size_pt"] = float(size_pt)
+                        changes.setdefault("roles", {}).setdefault(role, {})["size_pt"] = float(size_pt)
                         modified = True
                     if bold is not None:
                         f.bold = bool(bold)
                         if "bold" not in changes:
                             changes["bold"] = bool(bold)
+                        changes.setdefault("roles", {}).setdefault(role, {})["bold"] = bool(bold)
                         modified = True
                     if italic is not None:
                         f.italic = bool(italic)
                         if "italic" not in changes:
                             changes["italic"] = bool(italic)
+                        changes.setdefault("roles", {}).setdefault(role, {})["italic"] = bool(italic)
                         modified = True
                     if all_caps is not None:
                         f.all_caps = bool(all_caps)
                         if "all_caps" not in changes:
                             changes["all_caps"] = bool(all_caps)
+                        changes.setdefault("roles", {}).setdefault(role, {})["all_caps"] = bool(all_caps)
                         modified = True
                 except Exception:
                     pass
-        
-        # Apply paragraph-level overrides
+
         if align_val is not None:
             try:
                 pf = p.paragraph_format
                 pf.alignment = align_val
                 if "alignment" not in changes:
                     changes["alignment"] = align
+                changes.setdefault("roles", {}).setdefault(role, {})["alignment"] = align
                 modified = True
             except Exception:
                 pass
-        
+
         if modified:
             paragraphs_modified += 1
-    
-    return {"applied": bool(changes), "changes": changes, "paragraphs_modified": paragraphs_modified}
+
+    return {
+        "applied": bool(changes),
+        "changes": changes,
+        "paragraphs_modified": paragraphs_modified,
+        "style_targets": style_to_role,
+    }
 
 
 def analyze_whole_document(input_path: str, config: Dict[str, Any], max_samples: int = 3) -> Dict[str, Any]:

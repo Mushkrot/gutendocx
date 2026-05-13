@@ -182,6 +182,91 @@ def _styles_summary(styles: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return out
 
 
+HEADING_UI_TO_CONFIG = {
+    "heading1": "Headings",
+    "heading2": "Heading2",
+    "heading3": "Heading3",
+    "heading4": "Heading4",
+}
+
+
+def _style_override_from_ui(ov: Dict[str, Any], include_align: bool = True, footer: bool = False) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    fam = ov.get("font_family") if footer else (ov.get("family") or ov.get("font"))
+    if isinstance(fam, str) and fam.strip():
+        out["font_family" if footer else "font"] = fam.strip()
+    size_val = ov.get("size_pt")
+    if isinstance(size_val, (int, float)) and size_val > 0:
+        out["size_pt"] = float(size_val)
+    if include_align:
+        align = ov.get("align")
+        if isinstance(align, str) and align.strip() and align.strip() != "keep":
+            out["align"] = align.strip()
+    for key in ("bold", "italic", "all_caps", "underline", "strike", "small_caps"):
+        if key in ov:
+            out[key] = bool(ov.get(key))
+    line_spacing = ov.get("line_spacing")
+    if isinstance(line_spacing, (int, float)) and line_spacing > 0:
+        out["line_spacing"] = float(line_spacing)
+    spacing_before = ov.get("spacing_before_pt")
+    if isinstance(spacing_before, (int, float)) and spacing_before >= 0:
+        out["spacing_before_pt"] = float(spacing_before)
+    spacing_after = ov.get("spacing_after_pt")
+    if isinstance(spacing_after, (int, float)) and spacing_after >= 0:
+        out["spacing_after_pt"] = float(spacing_after)
+    return out
+
+
+def _merge_ui_style_overrides(cfg: Dict[str, Any], styles: Optional[Dict[str, Any]]) -> None:
+    if not isinstance(styles, dict):
+        return
+    so = (cfg.get("style_overrides") or {}) or {}
+
+    body_ov = styles.get("body")
+    if isinstance(body_ov, dict):
+        new_body = _style_override_from_ui(body_ov)
+        if new_body:
+            so["Body"] = new_body
+
+    headings_ov = styles.get("headings")
+    if isinstance(headings_ov, dict):
+        nested = any(k in headings_ov for k in HEADING_UI_TO_CONFIG)
+        if nested:
+            for ui_key, cfg_key in HEADING_UI_TO_CONFIG.items():
+                ov = headings_ov.get(ui_key)
+                if not isinstance(ov, dict):
+                    continue
+                new_heading = _style_override_from_ui(ov)
+                if new_heading:
+                    so[cfg_key] = new_heading
+        else:
+            new_headings = _style_override_from_ui(headings_ov)
+            if new_headings:
+                so["Headings"] = new_headings
+
+    footer_ov = styles.get("footer")
+    if isinstance(footer_ov, dict):
+        new_footer = _style_override_from_ui(footer_ov, include_align=False, footer=True)
+        if new_footer:
+            so["Footer"] = new_footer
+
+    if so:
+        cfg["style_overrides"] = so
+
+    specials_ov = styles.get("specials")
+    if isinstance(specials_ov, dict):
+        so_specials = (cfg.get("special_overrides") or {}) or {}
+        for name, ov in specials_ov.items():
+            if not isinstance(ov, dict):
+                continue
+            cur = (so_specials.get(name) or {}) or {}
+            new = dict(cur)
+            new.update(_style_override_from_ui(ov))
+            if new:
+                so_specials[name] = new
+        cfg["special_overrides"] = so_specials
+
+
 def _apply_request_summary(req: "ApplyRequest") -> Dict[str, Any]:
     batch_files = [p for p in (req.batch_files or []) if p]
     return {
@@ -971,6 +1056,11 @@ def config_learn_body_styles(req: LearnBodyStylesRequest, request: Request) -> D
                     style_overrides[role_key] = role_data
                 
                 cfg["style_overrides"] = style_overrides
+                detected_mapping = config_update.get("detected_style_mapping")
+                if isinstance(detected_mapping, dict):
+                    cur_mapping = (cfg.get("detected_style_mapping") or {}) or {}
+                    cur_mapping.update({str(k): str(v) for k, v in detected_mapping.items() if v})
+                    cfg["detected_style_mapping"] = cur_mapping
                 
                 config_path = req.config_path or os.path.join(os.getcwd(), "config.yaml")
                 print(f"DEBUG learn_body_styles: saving to {config_path}")
@@ -1354,6 +1444,7 @@ def whole_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                     if new:
                         so_specials[name] = new
                 cfg["special_overrides"] = so_specials
+            _merge_ui_style_overrides(cfg, req.styles)
         # Persist any changes coming from GUI (Body style, layout flags, etc.).
         save_config(cfg, req.config_path)
 
@@ -1664,6 +1755,7 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                     so = (cfg.get("style_overrides") or {}) or {}
                     so["Footer"] = new_footer
                     cfg["style_overrides"] = so
+            _merge_ui_style_overrides(cfg, req.styles)
         
         save_config(cfg, req.config_path)
         
@@ -2033,6 +2125,65 @@ def list_simples() -> Dict[str, Any]:
         return {"files": files}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/batch/status/{batch_id}")
+def batch_status(batch_id: str, request: Request) -> Dict[str, Any]:
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "", str(batch_id or ""))
+    if not safe_id:
+        raise HTTPException(status_code=400, detail="Invalid batch id")
+
+    zip_path = os.path.join(OUTPUT_DIR, f"{safe_id}.zip")
+    report_path = os.path.join(OUTPUT_DIR, f"{safe_id}_report.xlsx")
+    out_dir = os.path.join(OUTPUT_DIR, safe_id)
+    upload_dir = os.path.join(UPLOADS_DIR, safe_id)
+
+    outputs: List[Dict[str, Any]] = []
+    if os.path.isdir(out_dir):
+        try:
+            for name in sorted(os.listdir(out_dir)):
+                if name.startswith("."):
+                    continue
+                rel = os.path.join("output", safe_id, name).replace(os.sep, "/")
+                outputs.append(_file_ref(rel) or {"path": rel, "name": name})
+        except Exception:
+            outputs = []
+
+    uploads: List[Dict[str, Any]] = []
+    if os.path.isdir(upload_dir):
+        try:
+            for name in sorted(os.listdir(upload_dir)):
+                if name.startswith("."):
+                    continue
+                rel = os.path.join("Uploads", safe_id, name).replace(os.sep, "/")
+                uploads.append(_file_ref(rel) or {"path": rel, "name": name})
+        except Exception:
+            uploads = []
+
+    resp: Dict[str, Any] = {
+        "ok": True,
+        "batch_id": safe_id,
+        "ready": os.path.exists(zip_path),
+        "upload_count": len(uploads),
+        "output_count": len(outputs),
+        "uploads": uploads,
+        "outputs": outputs,
+        "zip": _file_ref(os.path.join("output", f"{safe_id}.zip").replace(os.sep, "/")) if os.path.exists(zip_path) else None,
+        "report": _file_ref(os.path.join("output", f"{safe_id}_report.xlsx").replace(os.sep, "/")) if os.path.exists(report_path) else None,
+    }
+    if os.path.exists(zip_path):
+        resp["download"] = _build_download_meta(zip_path)
+
+    _audit_event(
+        "batch_status.checked",
+        request,
+        batch_id=safe_id,
+        ready=bool(resp.get("ready")),
+        upload_count=len(uploads),
+        output_count=len(outputs),
+        download=resp.get("download"),
+    )
+    return resp
 
 
 @app.get("/fonts/list")

@@ -636,6 +636,15 @@
       return await res.json();
     }
 
+    async function getJson(path) {
+      const res = await fetch(api(path), { method: 'GET' });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status}: ${txt}`);
+      }
+      return await res.json();
+    }
+
     function auditFileList(files) {
       return Array.from(files || []).map(f => ({
         name: f.name,
@@ -704,6 +713,35 @@
           keepalive: true
         }).catch(() => {});
       } catch {}
+    }
+
+    async function pollBatchStatusAfterTimeout(batchId, maxAttempts = 90) {
+      if (!batchId) return null;
+      auditClient('batch_status_poll_started', { batch_id: batchId, max_attempts: maxAttempts });
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        setBusy(true, `Still processing batch… checking result (${attempt}/${maxAttempts})`);
+        try {
+          const status = await getJson(`/batch/status/${encodeURIComponent(batchId)}`);
+          auditClient('batch_status_polled', {
+            batch_id: batchId,
+            attempt,
+            ready: !!(status && status.ready),
+            output_count: status && status.output_count
+          });
+          if (status && status.ready && status.download) {
+            updateDownloadUi(status.download);
+            $("output").value = JSON.stringify(status, null, 2);
+            showToast('success', 'Batch finished after timeout. File is ready for download', 9000);
+            auditClient('batch_status_recovered_download', { batch_id: batchId, download: status.download });
+            return status;
+          }
+        } catch (e) {
+          auditClient('batch_status_poll_error', { batch_id: batchId, attempt, error: String(e) });
+        }
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+      auditClient('batch_status_poll_exhausted', { batch_id: batchId });
+      return null;
     }
 
     function getPayload(opts = {}) {
@@ -1538,6 +1576,11 @@
       } catch (e) {
         $("output").value = String(e);
         auditClient('apply_error', { payload: auditPayloadSummary(payload), error: String(e) });
+        if (String(e).includes('HTTP 524') && payload.batch_id) {
+          showToast('info', 'The request timed out, but the server may still be processing. Checking for the batch result…', 9000);
+          const recovered = await pollBatchStatusAfterTimeout(payload.batch_id);
+          if (recovered) return;
+        }
         showToast('error', String(e));
       } finally {
         // Stop spinner and any pending phase switch

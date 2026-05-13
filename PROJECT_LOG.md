@@ -74,6 +74,13 @@ Current iteration:
    - UI events for upload selection, Apply, TOC, Learn, Reset, Download, success and error paths;
    - endpoint duration, selected options, batch/file metadata, output/download metadata, and error details.
    - logs intentionally avoid document text/content and credential headers.
+6. Fixed heading-style application bugs found from the client's test files:
+   - backend now understands UI heading overrides shaped as `heading1` / `heading2` / `heading3` / `heading4`;
+   - `Learn Body Styles` now persists detected Word style mappings, including custom styles such as `Para 08`;
+   - whole-document apply uses detected heading mappings and no longer treats mapped heading styles as Body.
+7. Added batch timeout recovery:
+   - `GET /batch/status/{batch_id}` reports whether a generated ZIP is ready;
+   - UI polls this endpoint after `HTTP 524` on batch Apply and can recover/show the download when the server finishes after Cloudflare times out.
 
 ### 2026-05-12
 

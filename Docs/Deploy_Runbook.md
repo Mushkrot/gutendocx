@@ -79,6 +79,16 @@ Useful inspection command:
 tail -n 200 output/audit_events.jsonl
 ```
 
+## Batch Timeout Recovery
+
+Large synchronous batch Apply requests can exceed Cloudflare's request timeout even when the server continues processing and eventually writes the ZIP. The UI polls this endpoint after `HTTP 524`:
+
+```bash
+curl -fsS http://127.0.0.1:8000/batch/status/<batch_id>
+```
+
+When `ready` is true, the response includes `download` metadata for the ZIP. This is a recovery mechanism, not a replacement for a future background job/progress system.
+
 ## Restart Procedure
 
 Use this only after a code/config change that requires a restart.
