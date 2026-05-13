@@ -21,6 +21,8 @@ Current iteration:
 - Stage B cleanup: added `POST /jobs/cleanup` with dry-run default for old finished jobs and related output/upload artifacts.
 - Stage C controls: added cooperative job cancel, retry-failed-files job creation, and basic UI controls for Cancel / Retry failed.
 - Stage D restart recovery: queued/running jobs are requeued after service startup; completed files with existing output are skipped instead of reprocessed, and unfinished/running files resume from the next needed file.
+- Added admin panel at `/admin`, protected by Cloudflare Access authenticated email and limited to `highmac@gmail.com`; admin APIs expose AI cost summaries and file cleanup controls.
+- Added scheduled retention cleanup for uploaded/generated files older than 15 days while preserving audit/cost logs and active job state.
 - Saved official OpenAI prompt/model guide snapshots under `Docs/OpenAI_Guides/`.
 - Added `Docs/AI_Prompting_and_Usage_Analysis_2026-05-13.md` covering current AI usage, prompt/model considerations, Cloudflare timeout architecture, and the required cautious QA rule for risky prompt/model/pipeline changes.
 - Added the risky-change QA rule to `AGENTS.md`: commit baseline first, define before/after tests, compare results, and discuss prompt/model changes before implementation.
@@ -75,6 +77,7 @@ Current iteration:
 | Upload input | Normal multi-file `.docx` picker; do not use `webkitdirectory` for the main "Upload files" button unless adding a separate folder-upload flow |
 | Runtime config | `config.yaml` is user/runtime-editable; do not treat incidental diffs as code changes or revert automatically |
 | Audit log | `output/audit_events.jsonl` records user actions, selected options, file names/sizes, endpoint timings, outputs, and errors for diagnostics; do not log document contents |
+| Admin panel | `/admin`, app-level guarded by Cloudflare Access email; allowed admin email defaults to `highmac@gmail.com` via `GUTENDOCX_ADMIN_EMAILS` |
 
 ## Completed Work
 

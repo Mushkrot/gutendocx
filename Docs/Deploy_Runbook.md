@@ -79,6 +79,34 @@ Useful inspection command:
 tail -n 200 output/audit_events.jsonl
 ```
 
+## Admin Panel
+
+The admin panel is available at:
+
+```text
+https://gutendocx.unicloud.ca/admin
+```
+
+Access is enforced inside the FastAPI app using the Cloudflare Access authenticated email header:
+
+```text
+Cf-Access-Authenticated-User-Email
+```
+
+Only `highmac@gmail.com` is allowed by default. To change the list, set:
+
+```bash
+GUTENDOCX_ADMIN_EMAILS=highmac@gmail.com,other@example.com
+```
+
+Admin APIs are under `/admin/api/*` and use the same guard. Direct access to `/static/admin.html` is also blocked unless the same admin email is present.
+
+The panel currently shows:
+
+- AI cost totals and recent AI usage from `output/ai_costs.jsonl`;
+- storage totals for `Uploads/` and `output/`;
+- dry-run and real cleanup controls for old uploaded/generated files.
+
 ## Batch Timeout Recovery
 
 Batch Apply now uses background jobs so the browser does not keep a single long `/apply` request open through Cloudflare.
@@ -120,6 +148,19 @@ curl -fsS -X POST http://127.0.0.1:8000/jobs/cleanup \
 Default is `dry_run: true`. Review the returned `items` before running with `dry_run: false`.
 
 Cleanup only considers finished jobs and only removes paths under `output/` and, when explicitly enabled, `Uploads/`.
+
+## Scheduled Retention Cleanup
+
+The app starts a daemon cleanup loop on service startup. By default it removes uploaded/generated files older than 15 days:
+
+```bash
+GUTENDOCX_RETENTION_DAYS=15
+GUTENDOCX_SCHEDULED_CLEANUP=1
+GUTENDOCX_CLEANUP_INTERVAL_SECONDS=86400
+GUTENDOCX_CLEANUP_INITIAL_DELAY_SECONDS=60
+```
+
+The cleanup excludes `output/audit_events.jsonl`, `output/ai_costs.jsonl`, and active job state under `output/jobs/`. Finished old job records are cleaned through the job cleanup path.
 
 ## Cancel And Retry
 

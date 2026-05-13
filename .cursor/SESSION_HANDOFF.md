@@ -26,6 +26,7 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Runtime service: `gutendocx.service`.
 - Runtime bind: `127.0.0.1:8000`.
 - Runtime user: `root`, retained for now as a legacy compatibility constraint.
+- Admin panel: `/admin`, protected by app-level Cloudflare Access email check. Only `highmac@gmail.com` is allowed by default (`GUTENDOCX_ADMIN_EMAILS` can override/extend).
 - Server/security ownership: `/ai/SECURITY`.
 - App ownership: this repo.
 - `config.yaml` is intentionally modified by the platform during normal Web UI use. Treat its diffs as runtime/user state unless the task explicitly concerns config defaults or settings.
@@ -43,6 +44,8 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Stage B cleanup is implemented: `POST /jobs/cleanup` defaults to dry-run and can remove old finished jobs plus related output/upload artifacts under safe directories.
 - Stage C controls are implemented: `POST /jobs/{job_id}/cancel`, `POST /jobs/{job_id}/retry_failed`, and basic Web UI Cancel / Retry failed controls.
 - Stage D restart recovery is implemented: queued/running persisted jobs are resubmitted at startup; already completed files with existing output are skipped, while unfinished/running files are queued again.
+- Admin panel is implemented at `/admin`: AI cost summary/recent usage, storage overview, and dry-run/real cleanup controls. Admin APIs and direct `/static/admin.html` access require `highmac@gmail.com` from Cloudflare Access headers.
+- Scheduled cleanup is enabled by default and removes uploaded/generated files older than 15 days, excluding audit/cost logs and active job state.
 - Legacy `/batch/status/{batch_id}` remains available as a fallback/recovery endpoint.
 
 2026-05-13 OpenAI prompting/AI usage analysis:

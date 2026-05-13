@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GutenDocx Admin</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --border: #d9dee7;
+      --ink: #172033;
+      --muted: #5f6b7a;
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --accent: #1d4ed8;
+      --danger: #b91c1c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      position: sticky;
+      top: 0;
+      z-index: 5;
+    }
+    h1 { margin: 0; font-size: 20px; letter-spacing: 0; }
+    h2 { margin: 0 0 12px; font-size: 16px; letter-spacing: 0; }
+    main { max-width: 1240px; margin: 0 auto; padding: 24px; }
+    .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+    .two { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr); gap: 18px; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .metric {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      min-height: 88px;
+    }
+    .metric .label { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+    .metric .value { font-size: 24px; font-weight: 700; overflow-wrap: anywhere; }
+    label { color: var(--muted); font-size: 13px; }
+    select, input[type=number] {
+      height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0 10px;
+      background: #fff;
+      color: var(--ink);
+    }
+    button {
+      height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0 12px;
+      background: #fff;
+      color: var(--ink);
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+    button:disabled { opacity: 0.6; cursor: default; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid #e8edf4; vertical-align: top; }
+    th { color: var(--muted); font-weight: 700; background: #f8fafc; position: sticky; top: 73px; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .muted { color: var(--muted); }
+    .status { min-height: 22px; color: var(--muted); font-size: 13px; }
+    .warning { color: var(--danger); font-weight: 700; }
+    .scroll { max-height: 520px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 12px; }
+    @media (max-width: 900px) {
+      .grid, .two { grid-template-columns: 1fr; }
+      header { align-items: flex-start; flex-direction: column; }
+      th { position: static; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>GutenDocx Admin</h1>
+      <div id="adminEmail" class="muted">Cloudflare Access admin area</div>
+    </div>
+    <div class="toolbar">
+      <label for="days">Period</label>
+      <select id="days">
+        <option value="1">1 day</option>
+        <option value="7">7 days</option>
+        <option value="30" selected>30 days</option>
+        <option value="90">90 days</option>
+        <option value="365">365 days</option>
+      </select>
+      <button id="refresh" class="primary">Refresh</button>
+      <a href="/" class="muted">Main app</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="grid">
+      <div class="metric"><div class="label">AI spend</div><div id="metricCost" class="value">$0.0000</div></div>
+      <div class="metric"><div class="label">AI calls</div><div id="metricCalls" class="value">0</div></div>
+      <div class="metric"><div class="label">Tokens</div><div id="metricTokens" class="value">0</div></div>
+      <div class="metric"><div class="label">Stored files</div><div id="metricFiles" class="value">0</div></div>
+    </div>
+
+    <div class="two">
+      <section class="panel">
+        <h2>Recent AI Cost Events</h2>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Model</th>
+                <th>Kind</th>
+                <th>Batch / File</th>
+                <th class="num">Tokens</th>
+                <th class="num">Cost</th>
+              </tr>
+            </thead>
+            <tbody id="recentRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Storage Cleanup</h2>
+        <p class="muted">Scheduled cleanup removes uploaded/generated files older than 15 days. Logs and active job state are kept.</p>
+        <div class="toolbar" style="margin-bottom:12px;">
+          <label for="cleanupDays">Older than days</label>
+          <input id="cleanupDays" type="number" min="1" value="15" />
+          <button id="previewCleanup">Preview</button>
+          <button id="runCleanup" class="danger">Delete</button>
+        </div>
+        <div id="cleanupStatus" class="status"></div>
+        <div class="grid" style="grid-template-columns:1fr 1fr; margin:12px 0;">
+          <div class="metric"><div class="label">Uploads</div><div id="uploadsSize" class="value">0 B</div><div id="uploadsFiles" class="muted">0 files</div></div>
+          <div class="metric"><div class="label">Output</div><div id="outputSize" class="value">0 B</div><div id="outputFiles" class="muted">0 files</div></div>
+        </div>
+        <div class="scroll" style="max-height:300px;">
+          <table>
+            <thead><tr><th>Cleanup candidate</th><th>Kind</th><th class="num">Size</th></tr></thead>
+            <tbody id="cleanupRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel" style="margin-top:18px;">
+      <h2>Costs By Model</h2>
+      <div class="scroll" style="max-height:360px;">
+        <table>
+          <thead><tr><th>Model</th><th class="num">Calls</th><th class="num">Input</th><th class="num">Output</th><th class="num">Cost</th></tr></thead>
+          <tbody id="modelRows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const money = (n) => `$${Number(n || 0).toFixed(6)}`;
+    const intFmt = (n) => Number(n || 0).toLocaleString();
+    const sizeFmt = (n) => {
+      n = Number(n || 0);
+      if (n >= 1024 * 1024 * 1024) return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+      if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(2)} MB`;
+      if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+      return `${n} B`;
+    };
+    const timeFmt = (ts) => ts ? new Date(Number(ts) * 1000).toLocaleString() : "";
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+    async function api(path, options = {}) {
+      const res = await fetch(path, {
+        ...options,
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.detail || json.error || `HTTP ${res.status}`);
+      return json;
+    }
+
+    function renderSummary(data) {
+      $("adminEmail").textContent = `Signed in as ${data.admin_email}`;
+      const total = data.costs.total || {};
+      $("metricCost").textContent = money(total.cost_usd);
+      $("metricCalls").textContent = intFmt(total.calls);
+      $("metricTokens").textContent = intFmt(total.total_tokens);
+      const uploads = data.storage.uploads || {};
+      const output = data.storage.output || {};
+      $("metricFiles").textContent = intFmt((uploads.files || 0) + (output.files || 0));
+      $("uploadsSize").textContent = sizeFmt(uploads.bytes);
+      $("uploadsFiles").textContent = `${intFmt(uploads.files)} files`;
+      $("outputSize").textContent = sizeFmt(output.bytes);
+      $("outputFiles").textContent = `${intFmt(output.files)} files`;
+
+      $("recentRows").innerHTML = (data.costs.recent || []).map((r) => `
+        <tr>
+          <td>${esc(timeFmt(r.ts))}</td>
+          <td>${esc(r.model || "unknown")}</td>
+          <td>${esc(r.kind || r.endpoint || "")}</td>
+          <td><div>${esc(r.batch_id || "")}</div><div class="muted mono">${esc(r.input_path || "")}</div></td>
+          <td class="num">${intFmt(r.total_tokens)}</td>
+          <td class="num">${money(r.cost_usd)}</td>
+        </tr>
+      `).join("") || `<tr><td colspan="6" class="muted">No AI cost events for this period.</td></tr>`;
+
+      const modelRows = Object.entries(data.costs.by_model || {}).sort((a, b) => (b[1].cost_usd || 0) - (a[1].cost_usd || 0));
+      $("modelRows").innerHTML = modelRows.map(([model, r]) => `
+        <tr>
+          <td>${esc(model)}</td>
+          <td class="num">${intFmt(r.calls)}</td>
+          <td class="num">${intFmt(r.input_tokens)}</td>
+          <td class="num">${intFmt(r.output_tokens)}</td>
+          <td class="num">${money(r.cost_usd)}</td>
+        </tr>
+      `).join("") || `<tr><td colspan="5" class="muted">No model usage.</td></tr>`;
+    }
+
+    function renderCleanup(data) {
+      const storageItems = (data.storage && data.storage.items) || [];
+      const jobItems = (data.jobs && data.jobs.items) || [];
+      const items = [...storageItems, ...jobItems].slice(0, 300);
+      $("cleanupStatus").innerHTML = data.dry_run
+        ? `Preview: ${intFmt(data.items_count)} items would be removed.`
+        : `<span class="warning">Deleted ${intFmt(data.items_count)} items.</span>`;
+      $("cleanupRows").innerHTML = items.map((r) => `
+        <tr>
+          <td class="mono">${esc(r.path)}</td>
+          <td>${esc(r.kind || "")}${r.error ? `<div class="warning">${esc(r.error)}</div>` : ""}</td>
+          <td class="num">${r.size_bytes ? sizeFmt(r.size_bytes) : ""}</td>
+        </tr>
+      `).join("") || `<tr><td colspan="3" class="muted">No cleanup candidates.</td></tr>`;
+    }
+
+    async function refresh() {
+      $("refresh").disabled = true;
+      try {
+        const data = await api(`/admin/api/summary?days=${encodeURIComponent($("days").value)}`);
+        renderSummary(data);
+      } catch (e) {
+        $("adminEmail").textContent = e.message;
+      } finally {
+        $("refresh").disabled = false;
+      }
+    }
+
+    async function cleanup(dryRun) {
+      const days = Math.max(1, Number($("cleanupDays").value || 15));
+      if (!dryRun && !confirm(`Delete uploaded/generated files older than ${days} days?`)) return;
+      $("previewCleanup").disabled = true;
+      $("runCleanup").disabled = true;
+      try {
+        const data = await api("/admin/api/files/cleanup", {
+          method: "POST",
+          body: JSON.stringify({
+            older_than_days: days,
+            dry_run: dryRun,
+            include_uploads: true,
+            include_outputs: true,
+            include_job_records: true,
+          }),
+        });
+        renderCleanup(data);
+        await refresh();
+      } catch (e) {
+        $("cleanupStatus").textContent = e.message;
+      } finally {
+        $("previewCleanup").disabled = false;
+        $("runCleanup").disabled = false;
+      }
+    }
+
+    $("refresh").addEventListener("click", refresh);
+    $("days").addEventListener("change", refresh);
+    $("previewCleanup").addEventListener("click", () => cleanup(true));
+    $("runCleanup").addEventListener("click", () => cleanup(false));
+    refresh();
+    cleanup(true);
+  </script>
+</body>
+</html>

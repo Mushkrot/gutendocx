@@ -1,4 +1,5 @@
 from typing import Optional, Any, Dict, List
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -13,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -73,6 +74,32 @@ try:
     os.makedirs(JOBS_DIR, exist_ok=True)
 except Exception:
     pass
+
+
+def _env_int(name: str, default: int, minimum: Optional[int] = None) -> int:
+    raw = os.environ.get(name)
+    try:
+        value = int(str(raw).strip()) if raw is not None else int(default)
+    except Exception:
+        value = int(default)
+    if minimum is not None:
+        value = max(minimum, value)
+    return value
+
+
+ADMIN_EMAILS = {
+    e.strip().lower()
+    for e in os.environ.get("GUTENDOCX_ADMIN_EMAILS", "highmac@gmail.com").split(",")
+    if e.strip()
+}
+RETENTION_DAYS = _env_int("GUTENDOCX_RETENTION_DAYS", 15, 1)
+SCHEDULED_CLEANUP_ENABLED = os.environ.get("GUTENDOCX_SCHEDULED_CLEANUP", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
+SCHEDULED_CLEANUP_INTERVAL_SECONDS = _env_int("GUTENDOCX_CLEANUP_INTERVAL_SECONDS", 24 * 60 * 60, 60)
+SCHEDULED_CLEANUP_INITIAL_DELAY_SECONDS = _env_int("GUTENDOCX_CLEANUP_INITIAL_DELAY_SECONDS", 60, 0)
 
 
 AI_PRICES_PER_1M = {
@@ -156,6 +183,32 @@ def _request_context(request: Optional[Request]) -> Dict[str, Any]:
         "cf_access_user": headers.get("cf-access-authenticated-user-email"),
         "referer": _bounded_str(headers.get("referer"), 300),
     }
+
+
+def _request_user_email(request: Optional[Request]) -> Optional[str]:
+    if request is None:
+        return None
+    email = request.headers.get("cf-access-authenticated-user-email")
+    if not email:
+        return None
+    email = email.strip().lower()
+    return email or None
+
+
+def _is_admin_request(request: Optional[Request]) -> bool:
+    email = _request_user_email(request)
+    return bool(email and email in ADMIN_EMAILS)
+
+
+def _require_admin(request: Request) -> str:
+    email = _request_user_email(request)
+    if not email:
+        _audit_event("admin.access.denied", request, reason="missing_cloudflare_access_email")
+        raise HTTPException(status_code=401, detail="Cloudflare Access identity is required")
+    if email not in ADMIN_EMAILS:
+        _audit_event("admin.access.denied", request, reason="email_not_allowed", email=email)
+        raise HTTPException(status_code=403, detail="Admin access is restricted")
+    return email
 
 
 def _file_ref(path: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -346,6 +399,16 @@ class AuditHTTPMiddleware(BaseHTTPMiddleware):
         t0 = time.time()
         response = None
         try:
+            if request.url.path == "/static/admin.html":
+                email = _request_user_email(request)
+                if not email or email not in ADMIN_EMAILS:
+                    _audit_event(
+                        "admin.access.denied",
+                        request,
+                        reason="static_admin_html",
+                        email=email,
+                    )
+                    return JSONResponse({"detail": "Admin access is restricted"}, status_code=403)
             response = await call_next(request)
             return response
         except Exception as e:
@@ -817,6 +880,49 @@ def _resume_jobs_on_startup() -> None:
             JOB_EXECUTOR.submit(_run_apply_job, job_id)
             _audit_event("job.resume.submitted", None, job_id=job_id)
 
+
+def _scheduled_cleanup_loop() -> None:
+    if SCHEDULED_CLEANUP_INITIAL_DELAY_SECONDS:
+        time.sleep(SCHEDULED_CLEANUP_INITIAL_DELAY_SECONDS)
+    while True:
+        try:
+            _admin_cleanup_impl(
+                AdminFilesCleanupRequest(
+                    older_than_days=RETENTION_DAYS,
+                    dry_run=False,
+                    include_uploads=True,
+                    include_outputs=True,
+                    include_job_records=True,
+                ),
+                None,
+            )
+            _audit_event("scheduled_cleanup.completed", None, older_than_days=RETENTION_DAYS)
+        except Exception as e:
+            _audit_event(
+                "scheduled_cleanup.failed",
+                None,
+                older_than_days=RETENTION_DAYS,
+                error_type=type(e).__name__,
+                error=_bounded_str(e, 500),
+            )
+        time.sleep(SCHEDULED_CLEANUP_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+def _start_scheduled_cleanup() -> None:
+    if not SCHEDULED_CLEANUP_ENABLED:
+        return
+    thread = threading.Thread(target=_scheduled_cleanup_loop, name="gutendocx-cleanup", daemon=True)
+    thread.start()
+    _audit_event(
+        "scheduled_cleanup.started",
+        None,
+        older_than_days=RETENTION_DAYS,
+        interval_seconds=SCHEDULED_CLEANUP_INTERVAL_SECONDS,
+        initial_delay_seconds=SCHEDULED_CLEANUP_INITIAL_DELAY_SECONDS,
+    )
+
+
 FONTS_DIR = os.path.abspath(
     os.environ.get("GUTENDOCX_FONTS_DIR") or os.path.join(os.getcwd(), "fonts")
 )
@@ -1183,6 +1289,15 @@ def index():
     raise HTTPException(status_code=404, detail="Not Found")
 
 
+@app.get("/admin")
+def admin_panel(request: Request):
+    _require_admin(request)
+    path = os.path.join(STATIC_DIR, "admin.html")
+    if os.path.exists(path):
+        return FileResponse(path)
+    raise HTTPException(status_code=404, detail="Admin panel not found")
+
+
 class AnalyzeRequest(BaseModel):
     input: str
     vision: bool = True
@@ -1238,6 +1353,14 @@ class JobsCleanupRequest(BaseModel):
     dry_run: bool = True
     include_uploads: bool = False
     include_outputs: bool = True
+
+
+class AdminFilesCleanupRequest(BaseModel):
+    older_than_days: int = RETENTION_DAYS
+    dry_run: bool = True
+    include_uploads: bool = True
+    include_outputs: bool = True
+    include_job_records: bool = True
 
 
 def _is_safe_child(path: str, parent: str) -> bool:
@@ -1312,8 +1435,7 @@ def _job_cleanup_candidates(job: Dict[str, Any], include_outputs: bool, include_
     return out
 
 
-@app.post("/jobs/cleanup")
-def cleanup_jobs(req: JobsCleanupRequest, request: Request) -> Dict[str, Any]:
+def _cleanup_jobs_impl(req: JobsCleanupRequest, request: Optional[Request] = None) -> Dict[str, Any]:
     days = max(1, int(req.older_than_days or 30))
     cutoff_ms = _now_ms() - days * 24 * 60 * 60 * 1000
     eligible_statuses = {"completed", "failed", "interrupted", "cancelled"}
@@ -1358,6 +1480,297 @@ def cleanup_jobs(req: JobsCleanupRequest, request: Request) -> Dict[str, Any]:
     }
     _audit_event("jobs.cleanup", request, **{k: v for k, v in summary.items() if k != "items"}, items=items[:100])
     return summary
+
+
+@app.post("/jobs/cleanup")
+def cleanup_jobs(req: JobsCleanupRequest, request: Request) -> Dict[str, Any]:
+    return _cleanup_jobs_impl(req, request)
+
+
+def _storage_excluded(path: str) -> bool:
+    abs_path = os.path.abspath(path)
+    if _is_safe_child(abs_path, JOBS_DIR):
+        return True
+    protected = {
+        os.path.abspath(AUDIT_EVENTS_JSONL),
+        os.path.abspath(AI_COSTS_JSONL),
+    }
+    if abs_path in protected:
+        return True
+    name = os.path.basename(abs_path)
+    return name in {".gitkeep", ".gitignore"}
+
+
+def _storage_cleanup_candidates(root: str, cutoff_ts: float) -> List[str]:
+    root_abs = os.path.abspath(root)
+    if not os.path.isdir(root_abs):
+        return []
+    candidates: List[str] = []
+    for dirpath, dirnames, filenames in os.walk(root_abs):
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if not _storage_excluded(os.path.join(dirpath, d))
+        ]
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            if _storage_excluded(path):
+                continue
+            try:
+                if os.path.getmtime(path) <= cutoff_ts:
+                    candidates.append(path)
+            except Exception:
+                continue
+    return sorted(candidates)
+
+
+def _prune_empty_dirs(root: str, dry_run: bool) -> List[Dict[str, Any]]:
+    root_abs = os.path.abspath(root)
+    if not os.path.isdir(root_abs):
+        return []
+    items: List[Dict[str, Any]] = []
+    for dirpath, dirnames, filenames in os.walk(root_abs, topdown=False):
+        if os.path.abspath(dirpath) == root_abs:
+            continue
+        if _storage_excluded(dirpath):
+            continue
+        try:
+            if dirnames or filenames or os.listdir(dirpath):
+                continue
+            item: Dict[str, Any] = {"path": dirpath, "kind": "dir", "removed": False, "empty": True}
+            if not dry_run:
+                os.rmdir(dirpath)
+                item["removed"] = True
+            items.append(item)
+        except Exception as e:
+            items.append({"path": dirpath, "kind": "dir", "removed": False, "error": _bounded_str(e, 500)})
+    return items
+
+
+def _cleanup_storage_files(
+    older_than_days: int,
+    dry_run: bool,
+    include_uploads: bool,
+    include_outputs: bool,
+) -> Dict[str, Any]:
+    days = max(1, int(older_than_days or RETENTION_DAYS))
+    cutoff_ts = time.time() - days * 24 * 60 * 60
+    roots: List[str] = []
+    if include_uploads:
+        roots.append(UPLOADS_DIR)
+    if include_outputs:
+        roots.append(OUTPUT_DIR)
+
+    items: List[Dict[str, Any]] = []
+    for root in roots:
+        for path in _storage_cleanup_candidates(root, cutoff_ts):
+            if not _is_safe_child(path, root):
+                continue
+            items.append(_cleanup_remove(path, dry_run))
+        if not dry_run:
+            items.extend(_prune_empty_dirs(root, dry_run))
+
+    return {
+        "ok": True,
+        "dry_run": bool(dry_run),
+        "older_than_days": days,
+        "cutoff_ts": int(cutoff_ts),
+        "items_count": len(items),
+        "items": items,
+    }
+
+
+def _admin_cleanup_impl(req: AdminFilesCleanupRequest, request: Optional[Request] = None) -> Dict[str, Any]:
+    storage = _cleanup_storage_files(
+        older_than_days=req.older_than_days,
+        dry_run=bool(req.dry_run),
+        include_uploads=bool(req.include_uploads),
+        include_outputs=bool(req.include_outputs),
+    )
+    jobs = {"ok": True, "items_count": 0, "items": []}
+    if req.include_job_records:
+        jobs = _cleanup_jobs_impl(
+            JobsCleanupRequest(
+                older_than_days=max(1, int(req.older_than_days or RETENTION_DAYS)),
+                dry_run=bool(req.dry_run),
+                include_uploads=bool(req.include_uploads),
+                include_outputs=bool(req.include_outputs),
+            ),
+            request,
+        )
+    summary = {
+        "ok": True,
+        "dry_run": bool(req.dry_run),
+        "older_than_days": max(1, int(req.older_than_days or RETENTION_DAYS)),
+        "storage": storage,
+        "jobs": jobs,
+        "items_count": int(storage.get("items_count") or 0) + int(jobs.get("items_count") or 0),
+    }
+    _audit_event(
+        "admin.files.cleanup",
+        request,
+        dry_run=summary["dry_run"],
+        older_than_days=summary["older_than_days"],
+        storage_items=storage.get("items_count"),
+        job_items=jobs.get("items_count"),
+    )
+    return summary
+
+
+def _iter_jsonl(path: str, max_lines: Optional[int] = None) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(obj, dict):
+                    rows.append(obj)
+                    if max_lines and len(rows) >= max_lines:
+                        break
+    except FileNotFoundError:
+        return []
+    except Exception:
+        return rows
+    return rows
+
+
+def _day_key(ts: int) -> str:
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%d")
+    except Exception:
+        return "unknown"
+
+
+def _cost_summary(days: int = 30, recent_limit: int = 200) -> Dict[str, Any]:
+    now = int(time.time())
+    days = max(1, int(days or 30))
+    cutoff = now - days * 24 * 60 * 60
+    rows = [r for r in _iter_jsonl(AI_COSTS_JSONL) if int(r.get("ts") or 0) >= cutoff]
+    total = {
+        "calls": len(rows),
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cost_usd": 0.0,
+    }
+    by_model: Dict[str, Dict[str, Any]] = {}
+    by_day: Dict[str, Dict[str, Any]] = {}
+    by_kind: Dict[str, Dict[str, Any]] = {}
+
+    def add(bucket: Dict[str, Dict[str, Any]], key: str, row: Dict[str, Any]) -> None:
+        rec = bucket.setdefault(
+            key or "unknown",
+            {"calls": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": 0.0},
+        )
+        rec["calls"] += 1
+        rec["input_tokens"] += int(row.get("input_tokens") or 0)
+        rec["output_tokens"] += int(row.get("output_tokens") or 0)
+        rec["total_tokens"] += int(row.get("total_tokens") or 0)
+        try:
+            rec["cost_usd"] += float(row.get("cost_usd") or 0.0)
+        except Exception:
+            pass
+
+    for row in rows:
+        total["input_tokens"] += int(row.get("input_tokens") or 0)
+        total["output_tokens"] += int(row.get("output_tokens") or 0)
+        total["total_tokens"] += int(row.get("total_tokens") or 0)
+        try:
+            total["cost_usd"] += float(row.get("cost_usd") or 0.0)
+        except Exception:
+            pass
+        add(by_model, str(row.get("model") or "unknown"), row)
+        add(by_day, _day_key(int(row.get("ts") or 0)), row)
+        add(by_kind, str(row.get("kind") or row.get("endpoint") or "unknown"), row)
+
+    recent = sorted(rows, key=lambda r: int(r.get("ts") or 0), reverse=True)[: max(1, int(recent_limit or 200))]
+    return {
+        "ok": True,
+        "days": days,
+        "total": total,
+        "by_model": by_model,
+        "by_day": dict(sorted(by_day.items(), reverse=True)),
+        "by_kind": by_kind,
+        "recent": recent,
+    }
+
+
+def _storage_summary() -> Dict[str, Any]:
+    def scan(root: str) -> Dict[str, Any]:
+        total_files = 0
+        total_bytes = 0
+        oldest_ts = None
+        newest_ts = None
+        if os.path.isdir(root):
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = [d for d in dirnames if not _storage_excluded(os.path.join(dirpath, d))]
+                for name in filenames:
+                    path = os.path.join(dirpath, name)
+                    if _storage_excluded(path):
+                        continue
+                    try:
+                        st = os.stat(path)
+                    except Exception:
+                        continue
+                    total_files += 1
+                    total_bytes += int(st.st_size)
+                    mtime = int(st.st_mtime)
+                    oldest_ts = mtime if oldest_ts is None else min(oldest_ts, mtime)
+                    newest_ts = mtime if newest_ts is None else max(newest_ts, mtime)
+        return {
+            "path": root,
+            "files": total_files,
+            "bytes": total_bytes,
+            "oldest_ts": oldest_ts,
+            "newest_ts": newest_ts,
+        }
+
+    return {
+        "uploads": scan(UPLOADS_DIR),
+        "output": scan(OUTPUT_DIR),
+        "retention_days": RETENTION_DAYS,
+        "scheduled_cleanup_enabled": SCHEDULED_CLEANUP_ENABLED,
+    }
+
+
+@app.get("/admin/api/summary")
+def admin_summary(request: Request, days: int = 30) -> Dict[str, Any]:
+    email = _require_admin(request)
+    resp = {
+        "ok": True,
+        "admin_email": email,
+        "costs": _cost_summary(days=days),
+        "storage": _storage_summary(),
+    }
+    _audit_event("admin.summary.viewed", request, days=days)
+    return resp
+
+
+@app.post("/admin/api/files/cleanup")
+def admin_files_cleanup(req: AdminFilesCleanupRequest, request: Request) -> Dict[str, Any]:
+    _require_admin(request)
+    return _admin_cleanup_impl(req, request)
+
+
+@app.get("/admin/api/files/cleanup/preview")
+def admin_files_cleanup_preview(request: Request, older_than_days: int = RETENTION_DAYS) -> Dict[str, Any]:
+    _require_admin(request)
+    return _admin_cleanup_impl(
+        AdminFilesCleanupRequest(
+            older_than_days=max(1, int(older_than_days or RETENTION_DAYS)),
+            dry_run=True,
+            include_uploads=True,
+            include_outputs=True,
+            include_job_records=True,
+        ),
+        request,
+    )
 
 
 @app.post("/jobs/apply")

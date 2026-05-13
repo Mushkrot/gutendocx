@@ -48,6 +48,7 @@ This project is not a public discovery/SEO site. It is intended for one client p
   - local bind to `127.0.0.1:8000`;
   - host firewall default-DROP policy;
   - Cloudflare Tunnel as the public ingress path.
+- Admin access is additionally enforced inside the app for `/admin` and `/admin/api/*` by checking Cloudflare Access email headers. The default allowed admin email is `highmac@gmail.com` (`GUTENDOCX_ADMIN_EMAILS` can configure the list).
 - `/output` is statically mounted by the app. This is acceptable only because Cloudflare Access protects the hostname. Treat generated files as sensitive.
 - `Uploads/` and `output/` can contain client manuscripts and generated files. Do not print, commit, or casually summarize their contents.
 - `output/audit_events.jsonl` should log user-action metadata, selected options, file names/sizes, timings, outputs, and errors, but not document text/content or credential headers.
@@ -70,7 +71,7 @@ This project is not a public discovery/SEO site. It is intended for one client p
 ## Known Current Issues / Risks
 
 1. Runtime is root. This is accepted for now, but systemd hardening should be tested later without changing the runtime user first.
-2. `Uploads/` and `output/` do not currently have a documented retention policy.
+2. Uploaded/generated files are cleaned after 15 days by scheduled retention cleanup. Audit/cost logs remain sensitive operational metadata and are not part of file retention cleanup.
 3. Request path/config handling assumes trusted users behind Cloudflare Access. Do not remove Access without first hardening app-level auth and path validation.
 4. Built-in users/roles are a future roadmap item and would change the current Cloudflare Access-only app security model.
 5. `config.yaml` changes during normal use. Do not automatically commit or revert it without confirming the diff belongs to the requested work.
@@ -93,6 +94,8 @@ These items are captured for future planning and should not be implemented witho
 - **2026-05-13:** Added dry-run-first job cleanup endpoint for old finished jobs and related output/upload artifacts.
 - **2026-05-13:** Added cooperative job cancellation and retry-failed-files flow with basic Web UI controls.
 - **2026-05-13:** Added best-effort restart recovery for background jobs: queued/running jobs are resubmitted after service startup and completed files with existing output are not reprocessed.
+- **2026-05-13:** Added Cloudflare-email-gated admin panel at `/admin` for AI cost visibility and file cleanup controls, limited by default to `highmac@gmail.com`.
+- **2026-05-13:** Added scheduled retention cleanup for uploaded/generated files older than 15 days while preserving audit/cost logs and active job state.
 - **2026-05-13:** Refreshed OpenAI model pricing in the Web UI and backend cost accounting tables, added `gpt-5.4-nano` as a selectable model, and removed the unverified `gpt-5.1-mini` UI option.
 - **2026-05-13:** Fixed Windows upload picker compatibility by changing the primary Web UI upload control to normal multi-file `.docx` selection with an explicit accept filter. Verified the running service serves the updated static HTML without restart.
 - **2026-05-13:** Committed pending app changes for AI usage/cost reporting, `gpt-5-mini` cover vision default, batch `/apply` processing, XLSX report output, PDF page counting, and cover detection improvements. Added `python-multipart`, `openpyxl`, and `pypdf` dependencies.
