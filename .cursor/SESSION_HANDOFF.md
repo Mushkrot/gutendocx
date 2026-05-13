@@ -40,6 +40,13 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Verified the running app serves the updated static HTML from disk via `http://127.0.0.1:8000/`; no service restart or Docker rebuild was needed.
 - Ask the client to hard-refresh on Windows (`Ctrl+F5` or `Ctrl+Shift+R`) before retesting.
 
+2026-05-13 full pending-change commit:
+
+- Remaining pending app changes were committed after the upload fix.
+- Includes AI usage/cost accounting, `gpt-5-mini` cover vision default, batch `/apply` processing, XLSX batch report generation, PDF page counting with `pypdf`, cover detection improvements, UI display of actual AI spend, and dependency updates.
+- `dev.sh` is now tracked as a development helper; do not use it as production launcher because it binds `0.0.0.0` with reload.
+- Production service was not restarted as part of this commit.
+
 2026-05-12 read-only security alignment audit:
 
 - `gutendocx.service` is active and listens on `127.0.0.1:8000`.

@@ -211,6 +211,7 @@
       <option value="gpt-4.1-nano">GPT-4.1 Nano</option>
     </select>
     <span id="costEst" class="hint" style="margin-left:8px;">~$0.000</span>
+    <span id="costSpent" class="hint" style="margin-left:8px;"></span>
   </div>
   <div class="row primary-actions">
     <div class="inline" style="flex-wrap:wrap; align-items:flex-start; gap:16px;">
@@ -508,6 +509,24 @@
       $("costEst").textContent = `~$${total.toFixed(4)} (in ${inTok} tok, out ${outTok} tok)`;
     }
 
+    function renderSpentCost(json) {
+      const el = $("costSpent");
+      if (!el) return;
+      const c = json && json.ai_cost;
+      if (!c || typeof c !== 'object') {
+        el.textContent = '';
+        return;
+      }
+      const usd = (typeof c.total_usd === 'number') ? c.total_usd : 0;
+      const inTok = (typeof c.input_tokens === 'number') ? c.input_tokens : 0;
+      const outTok = (typeof c.output_tokens === 'number') ? c.output_tokens : 0;
+      if (!usd && !inTok && !outTok) {
+        el.textContent = '';
+        return;
+      }
+      el.textContent = `spent $${usd.toFixed(4)} (in ${inTok} tok, out ${outTok} tok)`;
+    }
+
     function roleBlock(enabledId, famId, sizeId, boldId, capsId, alignId) {
       const enabled = $(enabledId).checked;
       if (!enabled) return null;
@@ -796,7 +815,6 @@
       for (const f of files) {
         const rel = f.webkitRelativePath || f.name;
         const base = (rel.split(/[\\/]/).pop() || '').trim();
-        // Accept only .docx files, skip temp files (~$...)
         if (!base.toLowerCase().endsWith('.docx') || base.startsWith('~$')) {
           if (!base.startsWith('~$')) skippedNames.push(base);
           continue;
@@ -806,7 +824,7 @@
       }
 
       if (addedCount === 0) {
-        const msg = skippedNames.length > 0 
+        const msg = skippedNames.length > 0
           ? `No DOCX files selected. Skipped: ${skippedNames.slice(0, 5).join(', ')}${skippedNames.length > 5 ? '...' : ''}`
           : 'No DOCX files selected. Please select .docx files.';
         showToast('error', msg);
@@ -849,7 +867,6 @@
         setButtonsDisabled(false);
       }
 
-      // Auto-run analyze on first file after successful upload
       if (uploadOk && currentBatch && Array.isArray(currentBatch.files) && currentBatch.files.length) {
         try {
           await runAnalyzeAuto();
@@ -1399,6 +1416,7 @@
         const json = await callApi('/apply', payload);
         $("output").value = JSON.stringify(json, null, 2);
         await maybeShowPreview(json);
+        renderSpentCost(json);
         if (json && json.download) {
           updateDownloadUi(json.download);
           showToast('success', 'Your file is ready for download');

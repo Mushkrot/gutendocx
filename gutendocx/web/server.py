@@ -1,5 +1,8 @@
 from typing import Optional, Any, Dict, List
+import json
 import os
+import copy
+import re
 import time
 import zipfile
 
@@ -56,6 +59,123 @@ try:
     os.makedirs(UPLOADS_DIR, exist_ok=True)
 except Exception:
     pass
+
+
+AI_COSTS_JSONL = os.path.join(OUTPUT_DIR, "ai_costs.jsonl")
+
+
+AI_PRICES_PER_1M = {
+    "gpt-4o": {"in": 2.50, "out": 10.00},
+    "gpt-4o-mini": {"in": 0.15, "out": 0.60},
+    "gpt-4.1": {"in": 2.00, "out": 8.00},
+    "gpt-4.1-mini": {"in": 0.40, "out": 1.60},
+    "gpt-4.1-nano": {"in": 0.10, "out": 0.40},
+    "gpt-5": {"in": 1.25, "out": 10.00},
+    "gpt-5-mini": {"in": 0.25, "out": 2.00},
+    "gpt-5-nano": {"in": 0.05, "out": 0.40},
+    "gpt-5.1": {"in": 1.25, "out": 10.00},
+    "gpt-5.1-mini": {"in": 0.25, "out": 2.00},
+}
+
+
+def _normalize_model_for_pricing(model: Optional[str]) -> Optional[str]:
+    if not model:
+        return None
+    m = str(model).strip()
+    if not m:
+        return None
+    if m in AI_PRICES_PER_1M:
+        return m
+    if m.endswith("-vision"):
+        m2 = m[:-len("-vision")]
+        if m2 in AI_PRICES_PER_1M:
+            return m2
+    m2 = re.sub(r"\bgpt-5\.0", "gpt-5", m)
+    if m2 in AI_PRICES_PER_1M:
+        return m2
+    return None
+
+
+def _calc_ai_cost_usd(model: Optional[str], input_tokens: int, output_tokens: int) -> Optional[float]:
+    key = _normalize_model_for_pricing(model)
+    if not key:
+        return None
+    prices = AI_PRICES_PER_1M.get(key) or {}
+    cost_in = (float(input_tokens or 0) / 1_000_000.0) * float(prices.get("in") or 0.0)
+    cost_out = (float(output_tokens or 0) / 1_000_000.0) * float(prices.get("out") or 0.0)
+    return float(cost_in + cost_out)
+
+
+def _append_jsonl(path: str, obj: Dict[str, Any]) -> None:
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    except Exception:
+        pass
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _new_ai_totals() -> Dict[str, Any]:
+    return {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "total_usd": 0.0,
+        "by_model": {},
+    }
+
+
+def _add_ai_usage(totals: Dict[str, Any], usage: Optional[Dict[str, Any]], event: Dict[str, Any]) -> None:
+    if not usage or not isinstance(usage, dict):
+        return
+    model = usage.get("model")
+    in_tok = usage.get("input_tokens")
+    out_tok = usage.get("output_tokens")
+    if not isinstance(in_tok, int):
+        try:
+            in_tok = int(in_tok)
+        except Exception:
+            in_tok = 0
+    if not isinstance(out_tok, int):
+        try:
+            out_tok = int(out_tok)
+        except Exception:
+            out_tok = 0
+    totals["input_tokens"] = int(totals.get("input_tokens") or 0) + int(in_tok)
+    totals["output_tokens"] = int(totals.get("output_tokens") or 0) + int(out_tok)
+    totals["total_tokens"] = int(totals.get("total_tokens") or 0) + int(in_tok) + int(out_tok)
+    cost = _calc_ai_cost_usd(model, int(in_tok), int(out_tok))
+    if isinstance(cost, float):
+        totals["total_usd"] = float(totals.get("total_usd") or 0.0) + float(cost)
+    bm = totals.get("by_model")
+    if not isinstance(bm, dict):
+        bm = {}
+        totals["by_model"] = bm
+    mk = str(model) if model else "unknown"
+    rec = bm.get(mk)
+    if not isinstance(rec, dict):
+        rec = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "total_usd": 0.0}
+        bm[mk] = rec
+    rec["input_tokens"] = int(rec.get("input_tokens") or 0) + int(in_tok)
+    rec["output_tokens"] = int(rec.get("output_tokens") or 0) + int(out_tok)
+    rec["total_tokens"] = int(rec.get("total_tokens") or 0) + int(in_tok) + int(out_tok)
+    if isinstance(cost, float):
+        rec["total_usd"] = float(rec.get("total_usd") or 0.0) + float(cost)
+
+    evt = {
+        "ts": int(time.time()),
+        "endpoint": "/apply",
+        "model": model,
+        "input_tokens": int(in_tok),
+        "output_tokens": int(out_tok),
+        "total_tokens": int(in_tok) + int(out_tok),
+        "cost_usd": cost,
+    }
+    evt.update(event)
+    _append_jsonl(AI_COSTS_JSONL, evt)
 
 FONTS_DIR = os.path.abspath(
     os.environ.get("GUTENDOCX_FONTS_DIR") or os.path.join(os.getcwd(), "fonts")
@@ -127,17 +247,13 @@ def _build_download_meta(saved_path: Optional[str]) -> Optional[Dict[str, str]]:
     }
 
 
-def _build_batch_zip(items: List[Dict[str, str]], batch_id: Optional[str]) -> Optional[str]:
+def _build_batch_zip(items: List[Dict[str, str]], batch_id: Optional[str], extra_files: Optional[List[Dict[str, str]]] = None) -> Optional[str]:
     """Create a ZIP archive for a batch of processed DOCX files.
 
     Each item must have keys:
       - input_path: original input path (relative to project root)
       - output_path: saved DOCX path on disk
       - pdf_path: (optional) saved PDF path on disk
-
-    When batch_id is provided and the corresponding Uploads/batch_id directory
-    exists, we preserve the original folder structure inside the ZIP by
-    computing paths relative to that directory.
     """
 
     if not items:
@@ -192,7 +308,130 @@ def _build_batch_zip(items: List[Dict[str, str]], batch_id: Optional[str]) -> Op
                                 pdf_arcname = os.path.join(rel_dir, os.path.basename(abs_pdf))
                     zf.write(abs_pdf, pdf_arcname.replace(os.sep, "/"))
 
+        if extra_files:
+            for ef in extra_files:
+                if not isinstance(ef, dict):
+                    continue
+                ef_path = ef.get("path")
+                if not ef_path:
+                    continue
+                abs_ef = os.path.abspath(str(ef_path))
+                if not os.path.exists(abs_ef):
+                    continue
+                arcname = str(ef.get("arcname") or os.path.basename(abs_ef))
+                zf.write(abs_ef, arcname.replace(os.sep, "/"))
+
     return zip_path
+
+
+def _extract_cover_texts_for_report(input_path: str, detection: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    res = {"title": "", "subtitle": "", "author": ""}
+    if not detection:
+        return res
+    try:
+        from docx import Document  # type: ignore
+    except Exception:
+        return res
+    try:
+        doc = Document(input_path)
+    except Exception:
+        return res
+
+    cover_idxs = detection.get("cover_paragraph_indices") or []
+    try:
+        cover_idxs = [int(i) for i in cover_idxs]
+    except Exception:
+        cover_idxs = []
+
+    assignments = detection.get("assignments") or {}
+    role_to_key = {
+        "Cover Title": "title",
+        "Cover Subtitle": "subtitle",
+        "Cover Author": "author",
+    }
+    buckets: Dict[str, List[str]] = {"title": [], "subtitle": [], "author": []}
+    for idx in sorted(cover_idxs):
+        role = assignments.get(idx)
+        if role is None:
+            role = assignments.get(str(idx))
+        key = role_to_key.get(str(role) if role is not None else "")
+        if not key:
+            continue
+        if idx < 0 or idx >= len(doc.paragraphs):
+            continue
+        try:
+            t = doc.paragraphs[idx].text or ""
+        except Exception:
+            t = ""
+        t = re.sub(r"\s+", " ", t).strip()
+        if t:
+            buckets[key].append(t)
+
+    for k in ("title", "subtitle", "author"):
+        res[k] = " ".join(buckets.get(k) or []).strip()
+    return res
+
+
+def _count_pdf_pages(pdf_path: Optional[str]) -> Optional[int]:
+    if not pdf_path:
+        return None
+    abs_pdf = os.path.abspath(str(pdf_path))
+    if not os.path.exists(abs_pdf):
+        return None
+    try:
+        from pypdf import PdfReader  # type: ignore
+    except Exception:
+        return None
+    try:
+        reader = PdfReader(abs_pdf)
+        return int(len(getattr(reader, "pages", []) or []))
+    except Exception:
+        return None
+
+
+def _write_batch_report_xlsx(rows: List[Dict[str, Any]], output_path: str) -> str:
+    try:
+        from openpyxl import Workbook  # type: ignore
+        from openpyxl.styles import Alignment  # type: ignore
+    except Exception as e:
+        raise RuntimeError("openpyxl_missing") from e
+    out_dir = os.path.dirname(os.path.abspath(output_path))
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Filename", "Title", "Subtitle", "Author", "Pages"])
+
+    # Format header
+    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for cell in ws[1]:
+        cell.alignment = header_alignment
+
+    for r in rows:
+        pages_val = r.get("pages")
+        if not isinstance(pages_val, int):
+            pages_val = ""
+        ws.append(
+            [
+                str(r.get("filename") or ""),
+                str(r.get("title") or ""),
+                str(r.get("subtitle") or ""),
+                str(r.get("author") or ""),
+                pages_val,
+            ]
+        )
+
+    # Center-align Pages column values (E)
+    pages_alignment = Alignment(horizontal="center", vertical="center")
+    for row in ws.iter_rows(min_row=2, min_col=5, max_col=5, max_row=ws.max_row):
+        row[0].alignment = pages_alignment
+
+    # Autofilter on header row for all populated rows
+    ws.auto_filter.ref = f"A1:E{ws.max_row}"
+    ws.freeze_panes = "A2"
+
+    wb.save(output_path)
+    return output_path
 
 
 def _build_single_zip(docx_path: str, pdf_path: Optional[str] = None) -> Optional[str]:
@@ -394,7 +633,7 @@ def config_learn_cover_styles(req: LearnCoverStylesRequest) -> Dict[str, Any]:
         
         if not result.get("ok"):
             print(f"DEBUG learn_cover_styles: NOT OK, returning early. error={result.get('error')}")
-            return result
+        return result
         
         # If save_config is True, merge and save
         if req.save_config:
@@ -598,7 +837,6 @@ def toc_apply(req: TocApplyRequest) -> Dict[str, Any]:
                 result["toc_error"] = lo_res.get("error") or lo_res.get("stderr")
             return result
 
-        # Batch mode
         batch_files = [p for p in (req.batch_files or []) if p]
         if batch_files:
             results: List[Dict[str, Any]] = []
@@ -1095,7 +1333,212 @@ def unified_apply(req: ApplyRequest) -> Dict[str, Any]:
         out_cfg = (cfg.get("output", {}) or {})
         out_dir = out_cfg.get("dir", "output")
         os.makedirs(out_dir, exist_ok=True)
-        
+
+        ai_totals = _new_ai_totals()
+
+        batch_files = [p for p in (req.batch_files or []) if p]
+        if batch_files:
+            results: List[Dict[str, Any]] = []
+            zip_items: List[Dict[str, str]] = []
+            report_rows: List[Dict[str, Any]] = []
+
+            batch_name = req.batch_id or f"batch_{int(time.time())}"
+            batch_root: Optional[str] = None
+            if req.batch_id:
+                candidate = os.path.join(UPLOADS_DIR, req.batch_id)
+                if os.path.isdir(candidate):
+                    batch_root = os.path.abspath(candidate)
+
+            for path in batch_files:
+                inp_abs = os.path.abspath(os.path.join(os.getcwd(), path))
+                rel_dir = ""
+                if batch_root:
+                    try:
+                        rel_to_root = os.path.relpath(inp_abs, batch_root)
+                    except Exception:
+                        rel_to_root = None
+                    if rel_to_root and not str(rel_to_root).startswith(".."):
+                        rel_dir = os.path.dirname(str(rel_to_root))
+
+                file_out_dir = os.path.join(out_dir, batch_name, rel_dir) if rel_dir else os.path.join(out_dir, batch_name)
+                os.makedirs(file_out_dir, exist_ok=True)
+
+                cfg_file = copy.deepcopy(cfg)
+                out_cfg_file = (cfg_file.get("output", {}) or {})
+                out_cfg_file["dir"] = file_out_dir
+                cfg_file["output"] = out_cfg_file
+
+                r: Dict[str, Any] = {}
+                current = path
+
+                if req.apply_cover:
+                    cover_res = run_cover_pipeline(
+                        input_path=current,
+                        config=cfg_file,
+                        out_dir=file_out_dir,
+                        dry_run=False,
+                        no_layout=True,
+                        vision=bool(req.vision),
+                    )
+                    r["cover"] = cover_res
+                    try:
+                        det = (cover_res.get("detection") if isinstance(cover_res, dict) else None) or None
+                        if isinstance(det, dict):
+                            _add_ai_usage(
+                                ai_totals,
+                                det.get("ai_usage"),
+                                {
+                                    "batch_id": req.batch_id,
+                                    "input_path": path,
+                                    "kind": "cover_vision",
+                                },
+                            )
+                    except Exception:
+                        pass
+                    if cover_res.get("output_path"):
+                        current = cover_res["output_path"]
+
+                if req.apply_body:
+                    body_res = apply_whole_document(
+                        input_path=current,
+                        config=cfg_file,
+                    )
+                    r["body"] = body_res
+                    if body_res.get("output_path"):
+                        current = body_res["output_path"]
+
+                r["output_path"] = current
+
+                toc_cfg = (cfg_file.get("toc", {}) or {})
+                lo_cfg = (toc_cfg.get("libreoffice", {}) or {})
+                soffice_bin = lo_cfg.get("binary") or "soffice"
+                timeout = int(lo_cfg.get("timeout", 120))
+                use_docker = bool(lo_cfg.get("use_docker", True))
+                docker_image = lo_cfg.get("docker_image")
+
+                lo_input = current
+                if req.update_toc:
+                    toc_mode = req.toc_mode or "structured"
+                    toc_res = build_toc(input_path=lo_input, config=cfg_file, mode=toc_mode)
+                    pre_lo_path = toc_res.get("output_path")
+                    if pre_lo_path:
+                        lo_input = pre_lo_path
+                    r["toc"] = toc_res
+
+                lo_res = run_libreoffice_convert(
+                    lo_input,
+                    soffice=soffice_bin,
+                    out_dir=file_out_dir,
+                    timeout=timeout,
+                    use_docker=use_docker,
+                    docker_image=docker_image,
+                )
+                if lo_res.get("ok"):
+                    final_path = lo_res.get("output_path")
+                    if final_path:
+                        r["output_path"] = final_path
+                    pdf_out = lo_res.get("pdf_output_path")
+                    if pdf_out:
+                        r["pdf_output_path"] = pdf_out
+                    r["libreoffice_ok"] = True
+                else:
+                    r["libreoffice_error"] = lo_res.get("error") or lo_res.get("stderr")
+
+                results.append({"input_path": path, "result": r})
+
+                out_path = r.get("output_path")
+                pdf_path = r.get("pdf_output_path")
+                if out_path:
+                    zip_items.append(
+                        {
+                            "input_path": path,
+                            "output_path": str(out_path),
+                            "pdf_path": str(pdf_path) if pdf_path else None,
+                        }
+                    )
+
+                detection = None
+                if req.apply_cover:
+                    try:
+                        cover_part = r.get("cover")
+                        if isinstance(cover_part, dict):
+                            detection = cover_part.get("detection")
+                    except Exception:
+                        detection = None
+                if not detection:
+                    try:
+                        det_only = run_cover_pipeline(
+                            input_path=path,
+                            config=cfg_file,
+                            out_dir=file_out_dir,
+                            dry_run=True,
+                            no_layout=True,
+                            vision=bool(req.vision),
+                        )
+                        detection = det_only.get("detection")
+                        try:
+                            det = det_only.get("detection") if isinstance(det_only, dict) else None
+                            if isinstance(det, dict):
+                                _add_ai_usage(
+                                    ai_totals,
+                                    det.get("ai_usage"),
+                                    {
+                                        "batch_id": req.batch_id,
+                                        "input_path": path,
+                                        "kind": "cover_vision_dry_run",
+                                    },
+                                )
+                        except Exception:
+                            pass
+                    except Exception:
+                        detection = None
+
+                texts = _extract_cover_texts_for_report(path, detection)
+                report_rows.append(
+                    {
+                        "author": texts.get("author") or "",
+                        "title": texts.get("title") or "",
+                        "subtitle": texts.get("subtitle") or "",
+                        "pages": _count_pdf_pages(pdf_path),
+                        "filename": os.path.basename(path),
+                    }
+                )
+
+            report_path: Optional[str] = None
+            report_error: Optional[str] = None
+            extra_files: List[Dict[str, str]] = []
+            try:
+                report_path = _write_batch_report_xlsx(
+                    report_rows,
+                    os.path.join(OUTPUT_DIR, f"{batch_name}_report.xlsx"),
+                )
+                if report_path:
+                    extra_files.append({"path": report_path, "arcname": "report.xlsx"})
+            except Exception as e:
+                report_error = str(e)
+
+            zip_path = _build_batch_zip(
+                zip_items,
+                (req.batch_id or batch_name),
+                extra_files=extra_files or None,
+            )
+            resp: Dict[str, Any] = {
+                "batch": {
+                    "id": req.batch_id,
+                    "count": len(batch_files),
+                    "items": results,
+                },
+                "output_path": zip_path,
+                "report_path": report_path,
+                "ai_cost": ai_totals,
+            }
+            if report_error:
+                resp["report_error"] = report_error
+            download_meta = _build_download_meta(zip_path)
+            if download_meta:
+                resp["download"] = download_meta
+            return resp
+
         result: Dict[str, Any] = {}
         current_path = req.input
         
@@ -1115,6 +1558,20 @@ def unified_apply(req: ApplyRequest) -> Dict[str, Any]:
             print(f"DEBUG: cover detection skip={detection.get('skip')}, warnings={detection.get('warnings')}, assignments={detection.get('assignments')}")
             print(f"DEBUG: cover applied={cover_res.get('applied')}")
             result["cover"] = cover_res
+            try:
+                det = (cover_res.get("detection") if isinstance(cover_res, dict) else None) or None
+                if isinstance(det, dict):
+                    _add_ai_usage(
+                        ai_totals,
+                        det.get("ai_usage"),
+                        {
+                            "batch_id": req.batch_id,
+                            "input_path": req.input,
+                            "kind": "cover_vision",
+                        },
+                    )
+            except Exception:
+                pass
             if cover_res.get("output_path"):
                 current_path = cover_res["output_path"]
         
@@ -1184,6 +1641,8 @@ def unified_apply(req: ApplyRequest) -> Dict[str, Any]:
             download_meta = _build_download_meta(docx_path)
             if download_meta:
                 result["download"] = download_meta
+
+        result["ai_cost"] = ai_totals
         
         return result
     except Exception as e:

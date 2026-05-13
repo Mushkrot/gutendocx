@@ -18,6 +18,14 @@ Current iteration:
 - Restored clear client-side handling for "no DOCX selected" and skipped non-DOCX files.
 - Verified the running FastAPI service serves the updated `index.html` from disk; no service restart or Docker rebuild is required for this static HTML change.
 - Production security model remains unchanged: Cloudflare Access protected, tunnel to `127.0.0.1:8000`.
+- Committed the remaining pending app changes as requested:
+  - GPT-5 Mini default for cover vision;
+  - OpenAI token usage extraction and AI cost summaries;
+  - batch `/apply` handling with per-file output directories, ZIP packaging, PDF page counts, and XLSX report generation;
+  - cover detection improvements for rendered page breaks and author/year grouping;
+  - UI display of actual AI spend returned by `/apply`;
+  - added dependencies `python-multipart`, `openpyxl`, and `pypdf`;
+  - added `dev.sh` as a local development launcher only, not for production.
 
 Previous iteration:
 

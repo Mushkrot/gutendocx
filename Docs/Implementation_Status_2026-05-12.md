@@ -74,6 +74,7 @@ This project is not a public discovery/SEO site. It is intended for one client p
 ## Recent Changes
 
 - **2026-05-13:** Fixed Windows upload picker compatibility by changing the primary Web UI upload control to normal multi-file `.docx` selection with an explicit accept filter. Verified the running service serves the updated static HTML without restart.
+- **2026-05-13:** Committed pending app changes for AI usage/cost reporting, `gpt-5-mini` cover vision default, batch `/apply` processing, XLSX report output, PDF page counting, and cover detection improvements. Added `python-multipart`, `openpyxl`, and `pypdf` dependencies.
 - **2026-05-12:** Added current Codex project-memory structure: `PROJECT_LOG.md`, `AGENTS.md`, `.cursor/SESSION_HANDOFF.md`, `Docs/Implementation_Status_2026-05-12.md`, `Docs/Deploy_Runbook.md`, and `Docs/README.md`.
 - **2026-05-12:** Read-only server-security audit confirmed `gutendocx.service` is active, bound to `127.0.0.1:8000`, and protected externally by Cloudflare Access.
 - **2026-05-12:** `/ai/SECURITY` and `/ai/PORTS.yaml` were updated to include GutenDocx's Cloudflare Access/private-client/root-runtime context.

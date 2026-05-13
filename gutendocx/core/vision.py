@@ -9,7 +9,57 @@ import re
 import unicodedata
 from typing import Any, Dict, Optional, List
 from docx import Document
-from .cover import _has_page_or_section_break, _is_empty_para, _is_decorative_line
+from .cover import _collect_cover_paragraphs, _has_page_or_section_break, _is_empty_para, _is_decorative_line
+
+
+def _extract_openai_usage(resp: Any) -> Optional[Dict[str, int]]:
+    usage = None
+    try:
+        usage = getattr(resp, "usage", None)
+    except Exception:
+        usage = None
+
+    def _get(obj: Any, key: str) -> Optional[int]:
+        if obj is None:
+            return None
+        try:
+            if isinstance(obj, dict):
+                v = obj.get(key)
+            else:
+                v = getattr(obj, key, None)
+        except Exception:
+            v = None
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, (int, float)):
+            return int(v)
+        return None
+
+    prompt_tokens = _get(usage, "prompt_tokens")
+    completion_tokens = _get(usage, "completion_tokens")
+    input_tokens = _get(usage, "input_tokens")
+    output_tokens = _get(usage, "output_tokens")
+
+    if prompt_tokens is None and completion_tokens is None and input_tokens is None and output_tokens is None:
+        try:
+            data = resp.model_dump() if hasattr(resp, "model_dump") else {}
+        except Exception:
+            data = {}
+        u2 = data.get("usage") if isinstance(data, dict) else None
+        prompt_tokens = prompt_tokens if prompt_tokens is not None else _get(u2, "prompt_tokens")
+        completion_tokens = completion_tokens if completion_tokens is not None else _get(u2, "completion_tokens")
+        input_tokens = input_tokens if input_tokens is not None else _get(u2, "input_tokens")
+        output_tokens = output_tokens if output_tokens is not None else _get(u2, "output_tokens")
+
+    in_tok = prompt_tokens if prompt_tokens is not None else input_tokens
+    out_tok = completion_tokens if completion_tokens is not None else output_tokens
+    if in_tok is None and out_tok is None:
+        return None
+    return {
+        "input_tokens": int(in_tok or 0),
+        "output_tokens": int(out_tok or 0),
+        "total_tokens": int((in_tok or 0) + (out_tok or 0)),
+    }
 
 
 def _which_soffice() -> Optional[str]:
@@ -134,7 +184,7 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
             pass
         return "data:image/jpeg;base64," + base64.b64encode(b).decode("ascii")
 
-    def _call_openai_items(png_path: str, mdl: str) -> (List[Dict[str, Any]], str):
+    def _call_openai_items(png_path: str, mdl: str) -> (List[Dict[str, Any]], str, Optional[Dict[str, int]]):
         try:
             from openai import OpenAI  # type: ignore
         except Exception as e:
@@ -158,6 +208,7 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
                 if alt not in candidates:
                     candidates.append(alt)
         details["attempted_models"] = list(candidates)
+        last_usage: Optional[Dict[str, int]] = None
         for model_try in candidates:
             resp = None
             use_responses = str(model_try).lower().startswith("gpt-5")
@@ -210,6 +261,7 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
                             timeout=60,
                         )
                     last_err = None
+                    last_usage = _extract_openai_usage(resp)
                     break
                 except Exception as e:
                     last_err = e
@@ -231,6 +283,7 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
                         timeout=60,
                     )
                     last_err = None
+                    last_usage = _extract_openai_usage(resp)
                 except Exception as e:
                     last_err = e
             if last_err is not None:
@@ -305,13 +358,16 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
         items = obj.get("items", []) if isinstance(obj, dict) else []
         if not isinstance(items, list):
             raise RuntimeError("bad_items")
-        return items, used_model
+        return items, used_model, last_usage
 
     items: List[Dict[str, Any]] = []
     used_model = model
+    usage: Optional[Dict[str, int]] = None
     try:
-        items, used_model = _call_openai_items(rendered_png, model)
+        items, used_model, usage = _call_openai_items(rendered_png, model)
         details["used_model"] = used_model
+        if usage:
+            details["usage"] = usage
     except Exception as e:
         warnings.extend(["vision_call_failed", str(e)])
         return {
@@ -363,14 +419,7 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
         }
 
     doc = Document(input_path)
-    cover_paras = []
-    found_break = False
-    for p in doc.paragraphs:
-        if _has_page_or_section_break(p):
-            cover_paras.append(p)
-            found_break = True
-            break
-        cover_paras.append(p)
+    cover_paras, found_break = _collect_cover_paragraphs(doc)
     if not cover_paras or not found_break:
         warnings.append("no_page_break_found_or_empty_cover")
         return {
@@ -561,12 +610,34 @@ def detect_cover_roles_vision(input_path: str, config: Dict[str, Any]) -> Dict[s
                 if any((m == t) or t.startswith(m + " ") or (m + " ") in t for m in author_markers if m):
                     assignments[idx] = "Cover Author"
 
+    # Attach a standalone year line to the Author block when Author is present.
+    # This helps cases like "BY" + author name + year where the model may not label the year.
+    year_rx = re.compile(detect_cfg.get("year_regex", r"\b(1[5-9]\d{2}|20\d{2}|21\d{2})\b"))
+    have_author = any(v == "Cover Author" for v in assignments.values())
+    if have_author:
+        author_idxs = sorted([idx for idx, v in assignments.items() if v == "Cover Author"])
+        if author_idxs:
+            last_author = author_idxs[-1]
+            for idx in range(last_author + 1, min(last_author + 4, len(cover_paras))):
+                if idx not in cand_idxs:
+                    continue
+                if assignments.get(idx):
+                    continue
+                t = _fold_text(cover_paras[idx].text)
+                if not t:
+                    continue
+                digits = re.sub(r"\D", "", t)
+                if len(digits) == 4 and bool(year_rx.search(t)):
+                    assignments[idx] = "Cover Author"
+                    break
+
     return {
         "cover_paragraph_indices": list(range(len(cover_paras))),
         "assignments": {int(k): v for k, v in assignments.items()},
         "clusters": [],
         "warnings": warnings,
         "skip": False,
+        "ai_usage": ({"model": used_model, **usage} if usage else None),
         "vision": {
             "model": used_model,
             "rendered_png": rendered_png,

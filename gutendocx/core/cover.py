@@ -103,6 +103,58 @@ def _has_page_or_section_break(p) -> bool:
     return False
 
 
+def _has_explicit_page_or_section_break(p) -> bool:
+    el = p._element
+    try:
+        if el.xpath('.//w:br[@w:type="page"]'):
+            return True
+        if el.xpath('./w:pPr/w:sectPr'):
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _has_last_rendered_page_break(p) -> bool:
+    el = p._element
+    try:
+        return bool(el.xpath('.//w:lastRenderedPageBreak'))
+    except Exception:
+        return False
+
+
+def _collect_cover_paragraphs(doc: Document) -> (List, bool):
+    cover_paras = []
+    found_break = False
+    for i, p in enumerate(doc.paragraphs):
+        cover_paras.append(p)
+        if _has_explicit_page_or_section_break(p):
+            found_break = True
+            break
+        if _has_last_rendered_page_break(p):
+            non_empty_added = 0
+            for j in range(i + 1, min(i + 7, len(doc.paragraphs))):
+                p2 = doc.paragraphs[j]
+                if _has_explicit_page_or_section_break(p2):
+                    cover_paras.append(p2)
+                    found_break = True
+                    break
+                t2 = _norm_text(p2.text)
+                if not t2:
+                    cover_paras.append(p2)
+                    continue
+                if len(t2) <= 40:
+                    cover_paras.append(p2)
+                    non_empty_added += 1
+                    if non_empty_added >= 3:
+                        break
+                    continue
+                break
+            found_break = True
+            break
+    return cover_paras, found_break
+
+
 def _ensure_paragraph_style(doc: Document, style_name: str, font_cfg: Dict[str, Any]):
     styles = doc.styles
     try:
@@ -508,14 +560,7 @@ def detect_cover_roles(doc: Document, config: Dict[str, Any]) -> Dict[str, Any]:
     max_non_empty = int(detect_cfg.get("max_non_empty", 25))
     delta = float(detect_cfg.get("size_delta_pct", 10))
 
-    cover_paras = []
-    found_break = False
-    for p in doc.paragraphs:
-        if _has_page_or_section_break(p):
-            cover_paras.append(p)  # include the paragraph that contains the break
-            found_break = True
-            break
-        cover_paras.append(p)
+    cover_paras, found_break = _collect_cover_paragraphs(doc)
 
     warnings: List[str] = []
     if not cover_paras or not found_break:
@@ -667,14 +712,38 @@ def detect_cover_roles(doc: Document, config: Dict[str, Any]) -> Dict[str, Any]:
 
     if best_idx is not None and best_score >= 2:  # require stronger evidence (marker/year/name+smaller)
         role_map[best_idx] = "Cover Author"
-        # attach year on same line or next line
-        t_self = _norm_text(cover_paras[best_idx].text)
-        if t_self and year_rx.search(t_self):
-            pass
-        elif best_idx + 1 < len(cover_paras):
-            t_next = _norm_text(cover_paras[best_idx + 1].text)
-            if t_next and year_rx.search(t_next):
-                role_map[best_idx + 1] = "Cover Author"
+
+        t_self = _uc(_norm_text(cover_paras[best_idx].text))
+        marker_only = any((m == t_self) for m in author_markers if m)
+        self_has_year = bool(t_self and year_rx.search(t_self))
+        self_name_like = bool(re.match(r"^[A-Z][A-Za-z .,'\-]+$", t_self)) and len(t_self) <= 60
+
+        extend = marker_only or (not self_has_year and not self_name_like)
+        if extend:
+            added_any = False
+            for j in range(best_idx + 1, min(best_idx + 4, len(cover_paras))):
+                p2 = cover_paras[j]
+                if _is_empty_para(p2) or _is_decorative_line(p2.text):
+                    continue
+                t2 = _uc(_norm_text(p2.text))
+                if not t2:
+                    continue
+                is_year = bool(year_rx.search(t2)) and len(re.sub(r"\D", "", t2)) == 4
+                is_name = bool(re.match(r"^[A-Z][A-Za-z .,'\-]+$", t2)) and len(t2) <= 80
+                is_marker = any((m == t2) for m in author_markers if m)
+                if is_year or is_name or is_marker:
+                    role_map[j] = "Cover Author"
+                    added_any = True
+                    if is_year:
+                        break
+                    continue
+                if added_any:
+                    break
+        else:
+            if not self_has_year and best_idx + 1 < len(cover_paras):
+                t_next = _uc(_norm_text(cover_paras[best_idx + 1].text))
+                if t_next and year_rx.search(t_next) and len(re.sub(r"\D", "", t_next)) == 4:
+                    role_map[best_idx + 1] = "Cover Author"
 
     # Subtitle from remaining candidates via clusters, excluding title and author indices
     title_author_set = set(k for k, v in role_map.items() if v in ("Cover Title", "Cover Author"))

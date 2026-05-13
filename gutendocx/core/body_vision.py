@@ -23,6 +23,56 @@ from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 
+def _extract_openai_usage(resp: Any) -> Optional[Dict[str, int]]:
+    usage = None
+    try:
+        usage = getattr(resp, "usage", None)
+    except Exception:
+        usage = None
+
+    def _get(obj: Any, key: str) -> Optional[int]:
+        if obj is None:
+            return None
+        try:
+            if isinstance(obj, dict):
+                v = obj.get(key)
+            else:
+                v = getattr(obj, key, None)
+        except Exception:
+            v = None
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, (int, float)):
+            return int(v)
+        return None
+
+    prompt_tokens = _get(usage, "prompt_tokens")
+    completion_tokens = _get(usage, "completion_tokens")
+    input_tokens = _get(usage, "input_tokens")
+    output_tokens = _get(usage, "output_tokens")
+
+    if prompt_tokens is None and completion_tokens is None and input_tokens is None and output_tokens is None:
+        try:
+            data = resp.model_dump() if hasattr(resp, "model_dump") else {}
+        except Exception:
+            data = {}
+        u2 = data.get("usage") if isinstance(data, dict) else None
+        prompt_tokens = prompt_tokens if prompt_tokens is not None else _get(u2, "prompt_tokens")
+        completion_tokens = completion_tokens if completion_tokens is not None else _get(u2, "completion_tokens")
+        input_tokens = input_tokens if input_tokens is not None else _get(u2, "input_tokens")
+        output_tokens = output_tokens if output_tokens is not None else _get(u2, "output_tokens")
+
+    in_tok = prompt_tokens if prompt_tokens is not None else input_tokens
+    out_tok = completion_tokens if completion_tokens is not None else output_tokens
+    if in_tok is None and out_tok is None:
+        return None
+    return {
+        "input_tokens": int(in_tok or 0),
+        "output_tokens": int(out_tok or 0),
+        "total_tokens": int((in_tok or 0) + (out_tok or 0)),
+    }
+
+
 def generate_style_report(doc: Document, max_samples: int = 3) -> Dict[str, Any]:
     """
     Generate a comprehensive style inventory report for the document.
@@ -514,6 +564,7 @@ Use ONLY style names that appear in the inventory above."""
             api_kwargs["temperature"] = 0
         
         resp = client.chat.completions.create(**api_kwargs)
+        ai_usage = _extract_openai_usage(resp)
         
         txt = resp.choices[0].message.content if resp.choices else ""
         
@@ -559,6 +610,7 @@ Use ONLY style names that appear in the inventory above."""
             "rendered_pngs": rendered_pngs,
             "warnings": warnings,
             "model": model,
+            "ai_usage": ({"model": model, **ai_usage} if ai_usage else None),
             "elapsed_ms": int((time.time() - t0) * 1000),
         }
         
