@@ -121,6 +121,24 @@ Default is `dry_run: true`. Review the returned `items` before running with `dry
 
 Cleanup only considers finished jobs and only removes paths under `output/` and, when explicitly enabled, `Uploads/`.
 
+## Cancel And Retry
+
+Running/queued jobs can be cancelled:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8000/jobs/<job_id>/cancel
+```
+
+Cancellation is cooperative: the current file may finish first, then remaining queued files are marked `cancelled`.
+
+Failed files can be retried as a new job:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8000/jobs/<job_id>/retry_failed
+```
+
+The retry job uses the same Apply options but only the files with `failed` status, and writes to a retry batch id.
+
 Legacy recovery remains available for older synchronous `/apply` flows. Large synchronous batch Apply requests can exceed Cloudflare's request timeout even when the server continues processing and eventually writes the ZIP. The legacy UI recovery endpoint is:
 
 ```bash

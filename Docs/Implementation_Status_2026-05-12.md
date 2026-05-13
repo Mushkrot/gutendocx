@@ -91,6 +91,7 @@ These items are captured for future planning and should not be implemented witho
 - **2026-05-13:** Added background Apply jobs for batch processing with persisted job state, duplicate running-job reuse, `/jobs/apply`, `/jobs/{job_id}`, and Web UI polling to avoid Cloudflare `HTTP 524` as the normal batch path.
 - **2026-05-13:** Hardened background jobs with per-file progress/status, partial-success batch handling, and `Status`/`Error` columns in the XLSX batch report.
 - **2026-05-13:** Added dry-run-first job cleanup endpoint for old finished jobs and related output/upload artifacts.
+- **2026-05-13:** Added cooperative job cancellation and retry-failed-files flow with basic Web UI controls.
 - **2026-05-13:** Refreshed OpenAI model pricing in the Web UI and backend cost accounting tables, added `gpt-5.4-nano` as a selectable model, and removed the unverified `gpt-5.1-mini` UI option.
 - **2026-05-13:** Fixed Windows upload picker compatibility by changing the primary Web UI upload control to normal multi-file `.docx` selection with an explicit accept filter. Verified the running service serves the updated static HTML without restart.
 - **2026-05-13:** Committed pending app changes for AI usage/cost reporting, `gpt-5-mini` cover vision default, batch `/apply` processing, XLSX report output, PDF page counting, and cover detection improvements. Added `python-multipart`, `openpyxl`, and `pypdf` dependencies.

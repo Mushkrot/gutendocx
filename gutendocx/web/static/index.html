@@ -176,6 +176,12 @@
       </div>
     </div>
   </div>
+  <div class="row" id="jobControls" style="display:none;">
+    <label>Batch job</label>
+    <button id="btnCancelJob" type="button">Cancel</button>
+    <button id="btnRetryFailedJob" type="button" style="display:none;">Retry failed</button>
+    <span id="jobStatusText" class="hint"></span>
+  </div>
   <div class="row scope-row">
     <label class="scope-label">Apply to</label>
     <div class="scope-options">
@@ -785,6 +791,7 @@
         status: job.status,
         payload: auditPayloadSummary(payload)
       });
+      updateJobControls(job);
       return job;
     }
 
@@ -811,7 +818,11 @@
           status,
           progress
         });
+        updateJobControls(job);
         if (status === 'completed') {
+          return job;
+        }
+        if (status === 'cancelled') {
           return job;
         }
         if (status === 'failed' || status === 'interrupted') {
@@ -885,6 +896,7 @@
     const downloadState = {
       meta: null,
     };
+    let currentJob = null;
 
     // Timer handle for switching busy text between phases (cover -> body)
     let applyBusyTimer = null;
@@ -900,6 +912,22 @@
       }
     }
 
+    function updateJobControls(job) {
+      currentJob = job || null;
+      const row = $("jobControls");
+      if (!row) return;
+      if (!job || !job.id) {
+        row.style.display = 'none';
+        return;
+      }
+      const progress = job.progress || {};
+      const failed = progress.failed || 0;
+      row.style.display = '';
+      $("jobStatusText").textContent = `${job.status || 'unknown'} ${progress.processed || 0}/${progress.total || job.batch_count || 0}${failed ? `, ${failed} failed` : ''}`;
+      $("btnCancelJob").style.display = (job.status === 'queued' || job.status === 'running') ? '' : 'none';
+      $("btnRetryFailedJob").style.display = failed > 0 ? '' : 'none';
+    }
+
     $("downloadBtn").addEventListener('click', () => {
       const meta = downloadState.meta;
       if (!meta || !meta.url) {
@@ -913,6 +941,39 @@
       document.body.appendChild(link);
       link.click();
       setTimeout(() => document.body.removeChild(link), 0);
+    });
+
+    $("btnCancelJob").addEventListener('click', async () => {
+      if (!currentJob || !currentJob.id) return;
+      try {
+        const json = await callApi(`/jobs/${encodeURIComponent(currentJob.id)}/cancel`, {});
+        updateJobControls(json && json.job);
+        auditClient('apply_job_cancel_clicked', { job_id: currentJob.id });
+        showToast('info', 'Cancel requested. The current file may finish first.');
+      } catch (e) {
+        showToast('error', String(e));
+      }
+    });
+
+    $("btnRetryFailedJob").addEventListener('click', async () => {
+      if (!currentJob || !currentJob.id) return;
+      try {
+        const sourceJobId = currentJob.id;
+        const json = await callApi(`/jobs/${encodeURIComponent(sourceJobId)}/retry_failed`, {});
+        const job = json && json.job;
+        updateJobControls(job);
+        auditClient('apply_job_retry_failed_clicked', { source_job_id: sourceJobId, retry_job_id: job && job.id });
+        if (job && job.id) {
+          showToast('info', 'Retry job started for failed files.');
+          const completedJob = await pollApplyJob(job.id);
+          const result = (completedJob && completedJob.result) || completedJob;
+          $("output").value = JSON.stringify(result, null, 2);
+          if (result && result.download) updateDownloadUi(result.download);
+          renderSpentCost(result);
+        }
+      } catch (e) {
+        showToast('error', String(e));
+      }
     });
 
     $("vision").addEventListener('change', updateModelUIState);

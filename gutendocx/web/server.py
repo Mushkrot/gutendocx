@@ -538,7 +538,7 @@ def _job_progress(job: Dict[str, Any]) -> Dict[str, Any]:
     files = job.get("files")
     if isinstance(files, list) and files:
         total = len(files)
-        processed = len([f for f in files if isinstance(f, dict) and f.get("status") in ("completed", "failed", "skipped")])
+        processed = len([f for f in files if isinstance(f, dict) and f.get("status") in ("completed", "failed", "skipped", "cancelled")])
         failed = len([f for f in files if isinstance(f, dict) and f.get("status") == "failed"])
         current = next((f for f in files if isinstance(f, dict) and f.get("status") == "running"), None)
         return {
@@ -692,6 +692,35 @@ def _job_file_failed(index: int, path: str, error: BaseException, total: int) ->
     )
 
 
+def _job_cancel_requested() -> bool:
+    job_id = _current_job_id()
+    if not job_id:
+        return False
+    with JOB_LOCK:
+        job = JOB_INDEX.get(job_id)
+        return bool(job and job.get("cancel_requested"))
+
+
+def _mark_job_remaining_cancelled(start_index: int, total: int) -> None:
+    job_id = _current_job_id()
+    if not job_id:
+        return
+    with JOB_LOCK:
+        job = JOB_INDEX.get(job_id)
+        if not job:
+            return
+        files = job.get("files")
+        if not isinstance(files, list):
+            return
+        for index in range(start_index, min(total, len(files))):
+            rec = files[index]
+            if isinstance(rec, dict) and rec.get("status") == "queued":
+                rec["status"] = "cancelled"
+                rec["finished_at"] = _now_ms()
+                rec["updated_at"] = _now_ms()
+        _save_job(job)
+
+
 def _find_running_job(signature: str) -> Optional[Dict[str, Any]]:
     for job in JOB_INDEX.values():
         if job.get("signature") == signature and job.get("status") in ("queued", "running"):
@@ -717,7 +746,7 @@ def _run_apply_job(job_id: str) -> None:
             JOB_CONTEXT.job_id = None
         with JOB_LOCK:
             job = JOB_INDEX.get(job_id) or job
-            job["status"] = "completed"
+            job["status"] = "cancelled" if isinstance(result, dict) and result.get("cancelled") else "completed"
             job["finished_at"] = _now_ms()
             job["result"] = _json_safe(result)
             if isinstance(result, dict):
@@ -1369,6 +1398,72 @@ def get_job(job_id: str, request: Request) -> Dict[str, Any]:
         progress=public.get("progress"),
     )
     return {"job": public}
+
+
+@app.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, request: Request) -> Dict[str, Any]:
+    with JOB_LOCK:
+        job = JOB_INDEX.get(job_id)
+        if not job:
+            job = _load_job_file(_job_path(job_id))
+            if job and job.get("id"):
+                JOB_INDEX[str(job["id"])] = job
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job.get("status") not in ("queued", "running"):
+            return {"job": _job_public(job), "cancel_requested": False, "reason": "not_running"}
+        job["cancel_requested"] = True
+        job["cancel_requested_at"] = _now_ms()
+        if job.get("status") == "queued":
+            job["status"] = "cancelled"
+            job["finished_at"] = _now_ms()
+        _save_job(job)
+        public = _job_public(job)
+    _audit_event("job.cancel_requested", request, job_id=job_id, status=public.get("status"))
+    return {"job": public, "cancel_requested": True}
+
+
+@app.post("/jobs/{job_id}/retry_failed")
+def retry_failed_job(job_id: str, request: Request) -> Dict[str, Any]:
+    with JOB_LOCK:
+        job = JOB_INDEX.get(job_id)
+        if not job:
+            job = _load_job_file(_job_path(job_id))
+            if job and job.get("id"):
+                JOB_INDEX[str(job["id"])] = job
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        files = job.get("files")
+        failed_paths = [
+            str(f.get("path"))
+            for f in (files or [])
+            if isinstance(f, dict) and f.get("status") == "failed" and f.get("path")
+        ]
+        if not failed_paths:
+            raise HTTPException(status_code=400, detail="No failed files to retry")
+        payload = copy.deepcopy(job.get("request_payload") or {})
+        payload["batch_files"] = failed_paths
+        base_batch = payload.get("batch_id") or f"retry_{int(time.time())}"
+        payload["batch_id"] = f"{base_batch}_retry_{int(time.time())}"
+        req = ApplyRequest(**payload)
+
+    result = start_apply_job(req, request)
+    retry_job = result.get("job") if isinstance(result, dict) else None
+    if isinstance(retry_job, dict):
+        with JOB_LOCK:
+            stored = JOB_INDEX.get(str(retry_job.get("id")))
+            if stored:
+                stored["retry_of"] = job_id
+                _save_job(stored)
+                retry_job = _job_public(stored)
+    _audit_event(
+        "job.retry_failed.created",
+        request,
+        job_id=job_id,
+        retry_job_id=retry_job.get("id") if isinstance(retry_job, dict) else None,
+        failed_count=len(failed_paths),
+    )
+    return {"job": retry_job, "failed_count": len(failed_paths), "reused": result.get("reused") if isinstance(result, dict) else False}
 
 
 @app.post("/events/client")
@@ -2316,8 +2411,21 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                 if os.path.isdir(candidate):
                     batch_root = os.path.abspath(candidate)
 
+            cancelled = False
             _init_job_files(_current_job_id() or "", batch_files)
             for file_index, path in enumerate(batch_files):
+                if _job_cancel_requested():
+                    cancelled = True
+                    _mark_job_remaining_cancelled(file_index, len(batch_files))
+                    _audit_event(
+                        "job.cancelled",
+                        None,
+                        job_id=_current_job_id(),
+                        batch_id=req.batch_id,
+                        processed=file_index,
+                        total=len(batch_files),
+                    )
+                    break
                 _job_file_started(file_index, path, len(batch_files))
                 r: Dict[str, Any] = {}
                 pdf_path = None
@@ -2524,6 +2632,8 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                 "report_path": report_path,
                 "ai_cost": ai_totals,
             }
+            if cancelled:
+                resp["cancelled"] = True
             if report_error:
                 resp["report_error"] = report_error
             download_meta = _build_download_meta(zip_path)
