@@ -142,6 +142,15 @@
       </section>
 
       <section class="panel">
+        <h2>AI Model</h2>
+        <p class="muted">This model is used for all users. Regular users cannot change it from the main app.</p>
+        <div class="toolbar" style="margin-bottom:18px;">
+          <label for="adminModel">Current model</label>
+          <select id="adminModel"></select>
+          <button id="saveModel" class="primary">Save model</button>
+        </div>
+        <div id="modelStatus" class="status"></div>
+
         <h2>Storage Cleanup</h2>
         <p class="muted">Scheduled cleanup removes uploaded/generated files older than 15 days. Logs and active job state are kept.</p>
         <div class="toolbar" style="margin-bottom:12px;">
@@ -212,6 +221,15 @@
       $("uploadsFiles").textContent = `${intFmt(uploads.files)} files`;
       $("outputSize").textContent = sizeFmt(output.bytes);
       $("outputFiles").textContent = `${intFmt(output.files)} files`;
+
+      const currentModel = data.model || "";
+      const options = data.model_options || [];
+      $("adminModel").innerHTML = options.map((o) => {
+        const est = o.estimated_request_usd ? ` - ~$${Number(o.estimated_request_usd).toFixed(4)}` : "";
+        const selected = o.model === currentModel ? " selected" : "";
+        return `<option value="${esc(o.model)}"${selected}>${esc(o.label || o.model)}${est}</option>`;
+      }).join("");
+      $("modelStatus").textContent = currentModel ? `Active model: ${currentModel}` : "";
 
       $("recentRows").innerHTML = (data.costs.recent || []).map((r) => `
         <tr>
@@ -290,10 +308,28 @@
       }
     }
 
+    async function saveModel() {
+      const model = $("adminModel").value;
+      $("saveModel").disabled = true;
+      try {
+        const data = await api("/admin/api/model", {
+          method: "POST",
+          body: JSON.stringify({ model }),
+        });
+        $("modelStatus").textContent = `Saved: ${data.model}`;
+        await refresh();
+      } catch (e) {
+        $("modelStatus").textContent = e.message;
+      } finally {
+        $("saveModel").disabled = false;
+      }
+    }
+
     $("refresh").addEventListener("click", refresh);
     $("days").addEventListener("change", refresh);
     $("previewCleanup").addEventListener("click", () => cleanup(true));
     $("runCleanup").addEventListener("click", () => cleanup(false));
+    $("saveModel").addEventListener("click", saveModel);
     refresh();
     cleanup(true);
   </script>

@@ -49,6 +49,7 @@ This project is not a public discovery/SEO site. It is intended for one client p
   - host firewall default-DROP policy;
   - Cloudflare Tunnel as the public ingress path.
 - Admin access is additionally enforced inside the app for `/admin` and `/admin/api/*` by checking Cloudflare Access email headers. The default allowed admin email is `highmac@gmail.com` (`GUTENDOCX_ADMIN_EMAILS` can configure the list).
+- AI model selection is an admin-only operational setting. Regular users cannot change the model in the main UI, and backend Apply/Analyze/job endpoints force any submitted model value to the configured `cover.vision.model`.
 - `/output` is statically mounted by the app. This is acceptable only because Cloudflare Access protects the hostname. Treat generated files as sensitive.
 - `Uploads/` and `output/` can contain client manuscripts and generated files. Do not print, commit, or casually summarize their contents.
 - `output/audit_events.jsonl` should log user-action metadata, selected options, file names/sizes, timings, outputs, and errors, but not document text/content or credential headers.
@@ -95,6 +96,7 @@ These items are captured for future planning and should not be implemented witho
 - **2026-05-13:** Added cooperative job cancellation and retry-failed-files flow with basic Web UI controls.
 - **2026-05-13:** Added best-effort restart recovery for background jobs: queued/running jobs are resubmitted after service startup and completed files with existing output are not reprocessed.
 - **2026-05-13:** Added Cloudflare-email-gated admin panel at `/admin` for AI cost visibility and file cleanup controls, limited by default to `highmac@gmail.com`.
+- **2026-05-13:** Made AI model selection admin-only and backend-enforced so regular users cannot accidentally switch to a more expensive model for large batches.
 - **2026-05-13:** Added scheduled retention cleanup for uploaded/generated files older than 15 days while preserving audit/cost logs and active job state.
 - **2026-05-13:** Refreshed OpenAI model pricing in the Web UI and backend cost accounting tables, added `gpt-5.4-nano` as a selectable model, and removed the unverified `gpt-5.1-mini` UI option.
 - **2026-05-13:** Fixed Windows upload picker compatibility by changing the primary Web UI upload control to normal multi-file `.docx` selection with an explicit accept filter. Verified the running service serves the updated static HTML without restart.

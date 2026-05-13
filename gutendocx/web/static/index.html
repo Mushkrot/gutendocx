@@ -216,6 +216,7 @@
       <option value="gpt-4o">GPT-4o - ~$0.0063</option>
       <option value="gpt-4o-mini" selected>GPT-4o Mini (Recommended) - ~$0.0004</option>
     </select>
+    <span class="hint" style="margin-left:8px;">Admin controlled</span>
     <span id="costEst" class="hint" style="margin-left:8px;">~$0.000</span>
     <span id="costSpent" class="hint" style="margin-left:8px;"></span>
   </div>
@@ -508,6 +509,7 @@
 
     let specialStylesCache = [];
     let currentBatch = null;
+    let adminControlledModel = null;
 
     // OpenAI API standard pricing per 1M tokens, checked 2026-05-13.
     const PRICES = {
@@ -650,12 +652,11 @@
     }
 
     function updateModelUIState() {
-      const disabled = !$("vision").checked;
-      $("modelSel").disabled = disabled;
-      $("costEst").style.opacity = disabled ? 0.4 : 1;
-      $("minConf").disabled = disabled;
-      $("minConfVal").style.opacity = disabled ? 0.4 : 1;
-      $("confRow").style.opacity = disabled ? 0.6 : 1;
+      $("modelSel").disabled = true;
+      $("costEst").style.opacity = !$("vision").checked ? 0.4 : 1;
+      $("minConf").disabled = !$("vision").checked;
+      $("minConfVal").style.opacity = !$("vision").checked ? 0.4 : 1;
+      $("confRow").style.opacity = !$("vision").checked ? 0.6 : 1;
       estimateCost();
     }
 
@@ -679,6 +680,21 @@
         throw new Error(`HTTP ${res.status}: ${txt}`);
       }
       return await res.json();
+    }
+
+    async function loadModelSetting() {
+      try {
+        const data = await getJson('/settings/model');
+        if (data && data.model) {
+          adminControlledModel = data.model;
+          if ($("modelSel").querySelector(`option[value="${CSS.escape(data.model)}"]`)) {
+            $("modelSel").value = data.model;
+          }
+          estimateCost();
+        }
+      } catch (e) {
+        console.warn('Failed to load admin-controlled model:', e);
+      }
     }
 
     function auditFileList(files) {
@@ -846,7 +862,7 @@
         config_path: $("configPath").value.trim() || null,
         vision: $("vision").checked,
         no_layout: $("noLayout").checked,
-        model: $("modelSel").value,
+        model: adminControlledModel || $("modelSel").value,
         apply_body: applyBody,
         apply_cover: applyCover,
         min_confidence: parseFloat($("minConf").value),
@@ -977,11 +993,11 @@
     });
 
     $("vision").addEventListener('change', updateModelUIState);
-    $("modelSel").addEventListener('change', estimateCost);
     $("minConf").addEventListener('input', () => {
       $("minConfVal").textContent = parseFloat($("minConf").value).toFixed(2);
       estimateCost();
     });
+    loadModelSetting();
     updateModelUIState();
 
     function populateFontSelect(selId, inputId) {

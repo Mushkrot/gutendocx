@@ -25,6 +25,7 @@
 - Production URL `https://gutendocx.unicloud.ca` is protected by Cloudflare Access.
 - GutenDocx has no built-in login and should not be exposed anonymously without a separate app-auth/security project.
 - Admin panel lives at `/admin` and is additionally gated by Cloudflare Access email; only `highmac@gmail.com` is allowed by default.
+- AI model selection is admin-only; normal users cannot change the model, and backend requests are forced to the configured model.
 - Runtime remains `root` for legacy compatibility until the owner explicitly starts a migration/hardening project.
 - `Uploads/` and `output/` are operational data directories and may contain client files.
 - Batch Apply uses background jobs persisted under `output/jobs/`; inspect `/jobs/<job_id>` state when diagnosing long-running batch processing.

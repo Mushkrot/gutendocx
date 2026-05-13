@@ -104,8 +104,23 @@ Admin APIs are under `/admin/api/*` and use the same guard. Direct access to `/s
 The panel currently shows:
 
 - AI cost totals and recent AI usage from `output/ai_costs.jsonl`;
+- current AI model and an admin-only model selector;
 - storage totals for `Uploads/` and `output/`;
 - dry-run and real cleanup controls for old uploaded/generated files.
+
+AI model selection is admin-only. The regular user UI fetches the current model from:
+
+```bash
+GET /settings/model
+```
+
+The admin panel saves model changes through:
+
+```bash
+POST /admin/api/model
+```
+
+Backend Apply/Analyze/job paths do not trust a user-supplied `model` field; they force requests to the model saved in `config.yaml` under `cover.vision.model`.
 
 ## Batch Timeout Recovery
 

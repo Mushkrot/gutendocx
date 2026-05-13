@@ -1363,6 +1363,91 @@ class AdminFilesCleanupRequest(BaseModel):
     include_job_records: bool = True
 
 
+class AdminModelRequest(BaseModel):
+    model: str
+    config_path: Optional[str] = None
+
+
+def _configured_ai_model(config_path: Optional[str] = None) -> str:
+    cfg = load_config(config_path)
+    cover = cfg.get("cover", {}) if isinstance(cfg.get("cover"), dict) else {}
+    vision = cover.get("vision", {}) if isinstance(cover.get("vision"), dict) else {}
+    model = vision.get("model")
+    if isinstance(model, str) and model.strip():
+        return model.strip()
+    return "gpt-4o-mini"
+
+
+def _model_label(model: str) -> str:
+    labels = {
+        "gpt-5.4-nano": "GPT-5.4 Nano",
+        "gpt-5.1": "GPT-5.1",
+        "gpt-5": "GPT-5",
+        "gpt-5-mini": "GPT-5 Mini",
+        "gpt-5-nano": "GPT-5 Nano",
+        "gpt-4.1": "GPT-4.1",
+        "gpt-4.1-mini": "GPT-4.1 Mini",
+        "gpt-4.1-nano": "GPT-4.1 Nano",
+        "gpt-4o": "GPT-4o",
+        "gpt-4o-mini": "GPT-4o Mini",
+    }
+    return labels.get(model, model)
+
+
+def _model_options() -> List[Dict[str, Any]]:
+    preferred = [
+        "gpt-5.4-nano",
+        "gpt-5.1",
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5-nano",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "gpt-4o",
+        "gpt-4o-mini",
+    ]
+    out = []
+    for model in preferred:
+        prices = AI_PRICES_PER_1M.get(model)
+        if not prices:
+            continue
+        out.append(
+            {
+                "model": model,
+                "label": _model_label(model),
+                "input_per_1m": prices.get("in"),
+                "output_per_1m": prices.get("out"),
+                "estimated_request_usd": _calc_ai_cost_usd(model, 1500, 250),
+            }
+        )
+    return out
+
+
+def _force_configured_model(req: Any) -> str:
+    model = _configured_ai_model(getattr(req, "config_path", None))
+    try:
+        req.model = model
+    except Exception:
+        pass
+    return model
+
+
+def _save_admin_model(model: str, config_path: Optional[str] = None) -> Dict[str, Any]:
+    model = str(model or "").strip()
+    if model not in AI_PRICES_PER_1M:
+        raise HTTPException(status_code=400, detail=f"Unsupported model: {model}")
+    cfg = load_config(config_path)
+    cover = cfg.get("cover", {}) if isinstance(cfg.get("cover"), dict) else {}
+    vision = cover.get("vision", {}) if isinstance(cover.get("vision"), dict) else {}
+    old_model = vision.get("model")
+    vision["model"] = model
+    cover["vision"] = vision
+    cfg["cover"] = cover
+    saved_path = save_config(cfg, config_path)
+    return {"old_model": old_model, "model": model, "config_path": saved_path}
+
+
 def _is_safe_child(path: str, parent: str) -> bool:
     try:
         abs_path = os.path.abspath(path)
@@ -1745,6 +1830,8 @@ def admin_summary(request: Request, days: int = 30) -> Dict[str, Any]:
     resp = {
         "ok": True,
         "admin_email": email,
+        "model": _configured_ai_model(),
+        "model_options": _model_options(),
         "costs": _cost_summary(days=days),
         "storage": _storage_summary(),
     }
@@ -1756,6 +1843,34 @@ def admin_summary(request: Request, days: int = 30) -> Dict[str, Any]:
 def admin_files_cleanup(req: AdminFilesCleanupRequest, request: Request) -> Dict[str, Any]:
     _require_admin(request)
     return _admin_cleanup_impl(req, request)
+
+
+@app.get("/settings/model")
+def get_model_setting(request: Request, config_path: Optional[str] = None) -> Dict[str, Any]:
+    model = _configured_ai_model(config_path)
+    return {
+        "ok": True,
+        "model": model,
+        "label": _model_label(model),
+        "admin_controlled": True,
+        "is_admin": _is_admin_request(request),
+        "options": _model_options(),
+    }
+
+
+@app.post("/admin/api/model")
+def admin_set_model(req: AdminModelRequest, request: Request) -> Dict[str, Any]:
+    email = _require_admin(request)
+    result = _save_admin_model(req.model, req.config_path)
+    _audit_event(
+        "admin.model.updated",
+        request,
+        admin_email=email,
+        old_model=result.get("old_model"),
+        model=result.get("model"),
+        config_path=result.get("config_path"),
+    )
+    return {"ok": True, **result, "options": _model_options()}
 
 
 @app.get("/admin/api/files/cleanup/preview")
@@ -1780,6 +1895,16 @@ def start_apply_job(req: ApplyRequest, request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Background jobs currently require batch_files")
     if not req.apply_cover and not req.apply_body:
         raise HTTPException(status_code=400, detail="At least one of apply_cover or apply_body must be True")
+    requested_model = req.model
+    effective_model = _force_configured_model(req)
+    if requested_model and requested_model != effective_model:
+        _audit_event(
+            "model.override_ignored",
+            request,
+            requested_model=requested_model,
+            effective_model=effective_model,
+            endpoint="/jobs/apply",
+        )
 
     signature = _apply_job_signature(req)
     with JOB_LOCK:
@@ -2179,8 +2304,18 @@ def config_learn_body_styles(req: LearnBodyStylesRequest, request: Request) -> D
 
 
 @app.post("/cover/analyze")
-def cover_analyze(req: AnalyzeRequest) -> Dict[str, Any]:
+def cover_analyze(req: AnalyzeRequest, request: Request) -> Dict[str, Any]:
     try:
+        requested_model = req.model
+        effective_model = _force_configured_model(req)
+        if requested_model and requested_model != effective_model:
+            _audit_event(
+                "model.override_ignored",
+                request,
+                requested_model=requested_model,
+                effective_model=effective_model,
+                endpoint="/cover/analyze",
+            )
         cfg = load_config(req.config_path)
         if req.model:
             c = cfg.get("cover", {}) or {}
@@ -2736,7 +2871,17 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
     5. Converts to PDF
     6. Returns ZIP with DOCX + PDF
     """
+    requested_model = req.model
+    effective_model = _force_configured_model(req)
     t0 = time.time()
+    if requested_model and requested_model != effective_model:
+        _audit_event(
+            "model.override_ignored",
+            request,
+            requested_model=requested_model,
+            effective_model=effective_model,
+            endpoint="/apply",
+        )
     _audit_event("apply.started", request, **_apply_request_summary(req))
     print(f"DEBUG: unified_apply called. apply_cover={req.apply_cover}, apply_body={req.apply_body}, update_toc={req.update_toc}")
     
@@ -3404,8 +3549,18 @@ def reset_config(req: ResetConfigRequest, request: Request) -> Dict[str, Any]:
 
 
 @app.post("/cover/apply")
-def cover_apply(req: ApplyRequest) -> Dict[str, Any]:
+def cover_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
     try:
+        requested_model = req.model
+        effective_model = _force_configured_model(req)
+        if requested_model and requested_model != effective_model:
+            _audit_event(
+                "model.override_ignored",
+                request,
+                requested_model=requested_model,
+                effective_model=effective_model,
+                endpoint="/cover/apply",
+            )
         cfg = load_config(req.config_path)
         if req.model:
             c = cfg.get("cover", {}) or {}
@@ -3495,8 +3650,18 @@ class DebugVisionRequest(BaseModel):
 
 
 @app.post("/debug/vision")
-def debug_vision(req: DebugVisionRequest) -> Dict[str, Any]:
+def debug_vision(req: DebugVisionRequest, request: Request) -> Dict[str, Any]:
     try:
+        requested_model = req.model
+        effective_model = _force_configured_model(req)
+        if requested_model and requested_model != effective_model:
+            _audit_event(
+                "model.override_ignored",
+                request,
+                requested_model=requested_model,
+                effective_model=effective_model,
+                endpoint="/debug/vision",
+            )
         cfg = load_config(req.config_path)
         if req.model:
             c = cfg.get("cover", {}) or {}
