@@ -38,6 +38,7 @@
 ## Future Planning Topics
 
 - Refresh AI model choices and pricing, including newer OpenAI/ChatGPT models up to ChatGPT 5.5, then benchmark for the best quality/cost/latency tradeoff.
+- Include `gemini-2.5-flash-lite` in future model testing for cover/body vision classification; default remains unchanged until A/B tests prove quality and cost benefits.
 - Add an administrative AI cost dashboard based on the user's existing dashboard from another project.
 - Evaluate a possible full UI redesign using the user's existing design from another project.
 - Add admin/user roles with distinct permissions and dashboards after designing the app-auth/security changes.

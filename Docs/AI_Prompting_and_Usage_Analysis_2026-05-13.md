@@ -66,6 +66,7 @@ Potential prompt/API improvements to discuss before changing:
 4. **Do not change default model yet**
    - `gpt-4o-mini` remains a reasonable default for the current vision/classification workload.
    - Newer models should be benchmarked against representative DOCX files before replacing the default.
+   - Google `gemini-2.5-flash-lite` should be included as a future A/B test candidate for vision/classification because current Google pricing suggests it may be cheaper for image/text input, but it needs provider-abstraction work and quality validation before any production use.
 
 ## Model-Family Differences Relevant To GutenDocx
 

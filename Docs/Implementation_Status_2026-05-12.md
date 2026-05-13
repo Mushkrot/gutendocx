@@ -82,7 +82,7 @@ This project is not a public discovery/SEO site. It is intended for one client p
 
 These items are captured for future planning and should not be implemented without a separate explicit request:
 
-1. Review newly available OpenAI/ChatGPT models up to ChatGPT 5.5, add suitable options to the UI, update token pricing, and test/benchmark which model is optimal for GutenDocx.
+1. Review newly available OpenAI/ChatGPT models up to ChatGPT 5.5, add suitable options to the UI, update token pricing, and test/benchmark which model is optimal for GutenDocx. Include Google `gemini-2.5-flash-lite` as a future benchmark candidate for vision/classification, but do not implement Gemini support before provider-abstraction design and A/B quality tests.
 2. Build an administrative AI cost dashboard by reviewing the user's existing dashboard from another project and adapting the useful principles to GutenDocx.
 3. Evaluate a possible full UI redesign based on another existing project design the user will provide.
 4. Add users and roles: admin and normal user permissions, separate dashboards, and the required app-auth/security model around them.

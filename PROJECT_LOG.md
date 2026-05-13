@@ -119,6 +119,7 @@ Current iteration:
 
 1. **Client Windows retest:** ask the client to hard-refresh (`Ctrl+F5` / `Ctrl+Shift+R`) and confirm `Upload files...` opens a DOCX file picker.
 2. **AI model refresh:** review newly available OpenAI/ChatGPT models up to ChatGPT 5.5, update selectable model list, update token pricing, benchmark quality/cost/latency, and decide whether to replace the current default/optimal model choice.
+   - Include `gemini-2.5-flash-lite` as a future A/B benchmark candidate for vision/classification workloads. Do not implement Gemini support or change the default yet; first design a provider abstraction and compare quality/cost/latency on representative GutenDocx files.
 3. **AI cost admin dashboard:** review the existing dashboard from another project, extract its principles/design, and adapt it to GutenDocx for AI request cost visibility.
 4. **Potential UI redesign:** evaluate the alternative UI design from another project and decide whether to migrate GutenDocx to that design.
 5. **Users and permissions:** introduce admin/user roles with separate permissions and dashboards; this would change the current security model and must be designed before implementation.
@@ -133,6 +134,7 @@ These are future planning items, not permission to implement without a separate 
 
 1. **OpenAI/ChatGPT model and pricing refresh**
    - Check all relevant models released since this platform was first built, including models up to ChatGPT 5.5.
+   - Also evaluate whether Google `gemini-2.5-flash-lite` is worth supporting for cover/body vision classification, because it may be cheaper for image/text input than the current baseline while needing quality validation.
    - Add appropriate models to the UI selectable model list.
    - Update per-token pricing used for AI cost calculations.
    - Benchmark candidate models for this workflow and compare quality, cost, speed, reliability, and JSON/schema compliance.

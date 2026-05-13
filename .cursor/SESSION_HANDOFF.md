@@ -132,6 +132,7 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 ## Future Roadmap Notes
 
 - AI model refresh should include newly available OpenAI/ChatGPT models up to ChatGPT 5.5, UI model-list updates, current token pricing, and workflow-specific testing to select an optimal model.
+- Future model testing should include Google `gemini-2.5-flash-lite` as a candidate for cover/body vision classification. Do not implement it yet; first design provider abstraction and run A/B tests against `gpt-4o-mini`.
 - Admin dashboard work should reuse principles from the user's existing AI cost dashboard in another project.
 - UI redesign work should review the user's existing alternate design from another project before changing GutenDocx.
 - Built-in users/roles would be a security model change from the current Cloudflare Access-only approach.
