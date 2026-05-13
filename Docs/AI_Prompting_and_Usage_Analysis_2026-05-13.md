@@ -81,10 +81,10 @@ For GutenDocx, the prompt differences are likely meaningful only if we move from
 Quality remains higher priority than token cost, but logs show several optimization candidates:
 
 1. **Batch report cover dry-run**
-   - In batch `/apply`, if `apply_cover=false`, the server still runs a cover dry-run per file to populate report title/subtitle/author/page metadata.
-   - This can be justified if the XLSX report needs reliable cover metadata.
-   - If the report is optional or cover metadata is not needed for body-only runs, this may be unnecessary AI usage.
-   - Recommendation: discuss a UI/report option before changing behavior.
+   - Resolved on 2026-05-13.
+   - Body-only batch `/apply` no longer runs AI cover dry-run just to populate XLSX report title/subtitle/author metadata.
+   - If `apply_cover=false`, report cover metadata may be blank, but DOCX/PDF style output remains deterministic and avoids unnecessary per-file AI calls.
+   - QA baseline used `Simples/pg69954.docx`: before change, body-only batch spent 25,619 input tokens / 245 output tokens (`$0.00398985`) for `cover_vision_dry_run`; after change, AI cost was zero, PDF page count stayed 306, and DOCX paragraph/style/text signatures matched.
 
 2. **Repeated processing after Cloudflare timeout**
    - A user can click Apply again after a visible timeout while the server is still processing the first request.

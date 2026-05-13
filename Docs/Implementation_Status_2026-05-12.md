@@ -97,6 +97,7 @@ These items are captured for future planning and should not be implemented witho
 - **2026-05-13:** Added best-effort restart recovery for background jobs: queued/running jobs are resubmitted after service startup and completed files with existing output are not reprocessed.
 - **2026-05-13:** Added Cloudflare-email-gated admin panel at `/admin` for AI cost visibility and file cleanup controls, limited by default to `highmac@gmail.com`.
 - **2026-05-13:** Made AI model selection admin-only and backend-enforced so regular users cannot accidentally switch to a more expensive model for large batches.
+- **2026-05-13:** Avoided unnecessary AI spending in body-only batch Apply by skipping cover dry-run used only for XLSX report metadata when cover scope is off.
 - **2026-05-13:** Added scheduled retention cleanup for uploaded/generated files older than 15 days while preserving audit/cost logs and active job state.
 - **2026-05-13:** Refreshed OpenAI model pricing in the Web UI and backend cost accounting tables, added `gpt-5.4-nano` as a selectable model, and removed the unverified `gpt-5.1-mini` UI option.
 - **2026-05-13:** Fixed Windows upload picker compatibility by changing the primary Web UI upload control to normal multi-file `.docx` selection with an explicit accept filter. Verified the running service serves the updated static HTML without restart.

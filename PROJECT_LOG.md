@@ -24,6 +24,7 @@ Current iteration:
 - Added admin panel at `/admin`, protected by Cloudflare Access authenticated email and limited to `highmac@gmail.com`; admin APIs expose AI cost summaries and file cleanup controls.
 - Added scheduled retention cleanup for uploaded/generated files older than 15 days while preserving audit/cost logs and active job state.
 - Moved AI model selection under admin control: regular users see the configured model but cannot change it; backend ignores non-admin/user-supplied model overrides and uses the model saved in `config.yaml`.
+- Optimized body-only batch Apply: when cover scope is off, the XLSX report no longer triggers AI cover dry-run just to fill title/subtitle/author metadata.
 - Saved official OpenAI prompt/model guide snapshots under `Docs/OpenAI_Guides/`.
 - Added `Docs/AI_Prompting_and_Usage_Analysis_2026-05-13.md` covering current AI usage, prompt/model considerations, Cloudflare timeout architecture, and the required cautious QA rule for risky prompt/model/pipeline changes.
 - Added the risky-change QA rule to `AGENTS.md`: commit baseline first, define before/after tests, compare results, and discuss prompt/model changes before implementation.

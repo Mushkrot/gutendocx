@@ -46,6 +46,7 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Stage D restart recovery is implemented: queued/running persisted jobs are resubmitted at startup; already completed files with existing output are skipped, while unfinished/running files are queued again.
 - Admin panel is implemented at `/admin`: AI cost summary/recent usage, storage overview, and dry-run/real cleanup controls. Admin APIs and direct `/static/admin.html` access require `highmac@gmail.com` from Cloudflare Access headers.
 - AI model selection is admin-only. The main UI shows a disabled model selector, `/settings/model` exposes the current configured model, and Apply/Analyze/job APIs force user-supplied `model` to `config.yaml`'s `cover.vision.model`.
+- Body-only batch Apply no longer spends AI tokens on cover dry-run solely for XLSX report metadata. Cover metadata can be blank when `apply_cover=false`; DOCX/PDF output is unchanged.
 - Scheduled cleanup is enabled by default and removes uploaded/generated files older than 15 days, excluding audit/cost logs and active job state.
 - Legacy `/batch/status/{batch_id}` remains available as a fallback/recovery endpoint.
 

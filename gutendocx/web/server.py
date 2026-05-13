@@ -3180,7 +3180,8 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                                 detection = cover_part.get("detection")
                         except Exception:
                             detection = None
-                    if not detection:
+                    # Body-only batches should not spend AI tokens just to fill XLSX cover metadata.
+                    if req.apply_cover and not detection:
                         try:
                             det_only = run_cover_pipeline(
                                 input_path=path,
