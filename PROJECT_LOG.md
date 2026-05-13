@@ -12,6 +12,9 @@
 
 Current iteration:
 
+- Added `gpt-5.4-nano` to the Web UI model selector and backend AI cost table.
+- Refreshed the duplicated UI/backend model pricing table against OpenAI API docs as of 2026-05-13.
+- Removed the unverified `gpt-5.1-mini` UI/backend pricing entry; current official API docs list `gpt-5-mini`, `gpt-5.4-mini`, and `gpt-5.4-nano`, but not a general `gpt-5.1-mini` model.
 - Investigated a client report that after pressing "Upload files" on Windows no files were visible/selectable.
 - Root cause: the hidden upload input had been using `webkitdirectory`, which opens a folder picker rather than a normal file picker in Windows browser UX.
 - Updated the Web UI upload input to use normal multi-file `.docx` selection with an explicit DOCX `accept` filter.

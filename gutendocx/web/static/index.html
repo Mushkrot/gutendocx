@@ -202,7 +202,7 @@
       <option value="gpt-5-mini">GPT-5 Mini</option>
       <option value="gpt-5">GPT-5</option>
       <option value="gpt-5.1">GPT-5.1</option>
-      <option value="gpt-5.1-mini">GPT-5.1 Mini</option>
+      <option value="gpt-5.4-nano">GPT-5.4 Nano</option>
       <option value="gpt-5-nano">GPT-5 Nano</option>
       <option value="gpt-4o">GPT-4o</option>
       <option value="gpt-4o-mini" selected>GPT-4o Mini (Recommended)</option>
@@ -503,8 +503,9 @@
     let specialStylesCache = [];
     let currentBatch = null;
 
-    // Pricing per 1M tokens (approx, from user's table)
+    // OpenAI API standard pricing per 1M tokens, checked 2026-05-13.
     const PRICES = {
+      "gpt-5.4-nano": { in: 0.20, out: 1.25 },
       "gpt-4o": { in: 2.50, out: 10.00 },
       "gpt-4o-mini": { in: 0.15, out: 0.60 },
       "gpt-4.1": { in: 2.00, out: 8.00 },
@@ -514,7 +515,6 @@
       "gpt-5-mini": { in: 0.25, out: 2.00 },
       "gpt-5-nano": { in: 0.05, out: 0.40 },
       "gpt-5.1": { in: 1.25, out: 10.00 },
-      "gpt-5.1-mini": { in: 0.25, out: 2.00 },
     };
 
     // Rough token estimates per request (Vision ON)

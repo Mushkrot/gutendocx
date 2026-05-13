@@ -66,6 +66,7 @@ AUDIT_EVENTS_JSONL = os.path.join(OUTPUT_DIR, "audit_events.jsonl")
 
 
 AI_PRICES_PER_1M = {
+    "gpt-5.4-nano": {"in": 0.20, "out": 1.25},
     "gpt-4o": {"in": 2.50, "out": 10.00},
     "gpt-4o-mini": {"in": 0.15, "out": 0.60},
     "gpt-4.1": {"in": 2.00, "out": 8.00},
@@ -75,7 +76,6 @@ AI_PRICES_PER_1M = {
     "gpt-5-mini": {"in": 0.25, "out": 2.00},
     "gpt-5-nano": {"in": 0.05, "out": 0.40},
     "gpt-5.1": {"in": 1.25, "out": 10.00},
-    "gpt-5.1-mini": {"in": 0.25, "out": 2.00},
 }
 
 

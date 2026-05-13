@@ -33,6 +33,13 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 
 ## Recent Audit
 
+2026-05-13 AI model/pricing refresh:
+
+- Added `gpt-5.4-nano` to the Web UI model selector and backend cost accounting table.
+- Refreshed UI/backend token prices against current OpenAI API docs.
+- Removed the unverified `gpt-5.1-mini` option from the UI/backend pricing table; current official API docs list `gpt-5-mini`, `gpt-5.4-mini`, and `gpt-5.4-nano`, but not a general `gpt-5.1-mini` API model.
+- Default remains `gpt-4o-mini` until quality/cost benchmarking proves a better replacement for GutenDocx.
+
 2026-05-13 Windows upload compatibility fix:
 
 - Client reported that on Windows, after pressing "Upload files", files were not visible/selectable.
