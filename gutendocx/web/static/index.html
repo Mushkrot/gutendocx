@@ -355,7 +355,7 @@
             <summary style="cursor:pointer; font-weight:600;">Headings <span id="headingsSummaryInfo" class="hint" style="margin-left:8px; font-weight:normal;"></span></summary>
             <!-- Container for all heading levels (filled dynamically) -->
             <div id="headingsContainer" style="margin-top:12px;">
-              <!-- Heading 1 (always shown) -->
+              <!-- Heading 1-3 are shown by default; learned analysis fills Word style metadata when available. -->
               <div class="heading-level" id="heading1Section" style="margin-bottom:12px; padding:8px; background:#f8fafc; border-radius:4px;">
                 <div class="inline" style="margin-bottom:4px;">
                   <strong>Heading 1 (Chapters)</strong>
@@ -371,7 +371,37 @@
                   <label><input id="heading1AllCaps" type="checkbox" /> ALL CAPS</label>
                 </div>
               </div>
-              <!-- Heading 2, 3, 4 will be added here dynamically -->
+              <div class="heading-level" id="heading2Section" style="margin-bottom:12px; padding:8px; background:#f8fafc; border-radius:4px;">
+                <div class="inline" style="margin-bottom:4px;">
+                  <strong>Heading 2 (Sections)</strong>
+                  <span id="heading2StyleInfo" class="hint" style="margin-left:8px;"></span>
+                </div>
+                <div class="inline">
+                  <label>Family</label>
+                  <input id="heading2Family" class="w-200" type="text" placeholder="Times New Roman" />
+                  <label>Size</label>
+                  <input id="heading2Size" class="w-80" type="number" min="6" max="96" step="1" placeholder="18" />
+                  <label><input id="heading2Bold" type="checkbox" /> Bold</label>
+                  <label><input id="heading2Italic" type="checkbox" /> Italic</label>
+                  <label><input id="heading2AllCaps" type="checkbox" /> ALL CAPS</label>
+                </div>
+              </div>
+              <div class="heading-level" id="heading3Section" style="margin-bottom:12px; padding:8px; background:#f8fafc; border-radius:4px;">
+                <div class="inline" style="margin-bottom:4px;">
+                  <strong>Heading 3 (Subsections)</strong>
+                  <span id="heading3StyleInfo" class="hint" style="margin-left:8px;"></span>
+                </div>
+                <div class="inline">
+                  <label>Family</label>
+                  <input id="heading3Family" class="w-200" type="text" placeholder="Times New Roman" />
+                  <label>Size</label>
+                  <input id="heading3Size" class="w-80" type="number" min="6" max="96" step="1" placeholder="18" />
+                  <label><input id="heading3Bold" type="checkbox" /> Bold</label>
+                  <label><input id="heading3Italic" type="checkbox" /> Italic</label>
+                  <label><input id="heading3AllCaps" type="checkbox" /> ALL CAPS</label>
+                </div>
+              </div>
+              <!-- Heading 4 is added dynamically when detected. -->
             </div>
           </details>
         </div>
@@ -1282,49 +1312,46 @@
         summaryInfo.innerHTML = foundCount > 0 ? `(${foundCount} levels detected)` : '';
       }
       
-      // Update Heading 1 placeholders
-      if (styles.heading1) {
-        const h1 = styles.heading1;
-        if (h1.family) $('heading1Family').placeholder = h1.family;
-        if (h1.size_pt) $('heading1Size').placeholder = String(h1.size_pt);
-        if (h1.bold) $('heading1Bold').checked = true;
-        if (h1.all_caps) $('heading1AllCaps').checked = true;
-        // Show Word style name
-        const h1Info = $('heading1StyleInfo');
-        if (h1Info && h1._style_name) {
-          h1Info.innerHTML = `Word style: "<b>${h1._style_name}</b>" (${h1.family || 'theme'}, ${h1.size_pt || '—'}pt)`;
-        }
-      }
-      
-      // Remove any existing dynamic heading sections (2, 3, 4)
+      // Update visible heading sections and create Heading 4 only when detected.
       const container = $('headingsContainer');
       container.querySelectorAll('.heading-level-dynamic').forEach(el => el.remove());
-      
-      // Create dynamic heading sections (Heading 2, 3, 4) inside headingsContainer
-      for (const [role, level] of [['heading2', 2], ['heading3', 3], ['heading4', 4]]) {
+
+      for (const [role, level] of [['heading1', 1], ['heading2', 2], ['heading3', 3], ['heading4', 4]]) {
         const params = styles[role];
         if (!params || !params._style_name) continue;
-        
-        const section = document.createElement('div');
-        section.className = 'heading-level heading-level-dynamic';
-        section.id = `heading${level}Section`;
-        section.style.cssText = 'margin-bottom:12px; padding:8px; background:#f8fafc; border-radius:4px;';
-        section.innerHTML = `
-          <div class="inline" style="margin-bottom:4px;">
-            <strong>${roleLabels[role]}</strong>
-            <span class="hint" style="margin-left:8px;">Word style: "<b>${params._style_name}</b>" (${params.family || 'theme'}, ${params.size_pt || '—'}pt)</span>
-          </div>
-          <div class="inline">
-            <label>Family</label>
-            <input id="heading${level}Family" class="w-200" type="text" placeholder="${params.family || 'Times New Roman'}" />
-            <label>Size</label>
-            <input id="heading${level}Size" class="w-80" type="number" min="6" max="96" step="1" placeholder="${params.size_pt || '18'}" />
-            <label><input id="heading${level}Bold" type="checkbox" ${params.bold ? 'checked' : ''} /> Bold</label>
-            <label><input id="heading${level}Italic" type="checkbox" /> Italic</label>
-            <label><input id="heading${level}AllCaps" type="checkbox" ${params.all_caps ? 'checked' : ''} /> ALL CAPS</label>
-          </div>
-        `;
-        container.appendChild(section);
+
+        let section = $(`heading${level}Section`);
+        if (!section) {
+          section = document.createElement('div');
+          section.className = 'heading-level heading-level-dynamic';
+          section.id = `heading${level}Section`;
+          section.style.cssText = 'margin-bottom:12px; padding:8px; background:#f8fafc; border-radius:4px;';
+          section.innerHTML = `
+            <div class="inline" style="margin-bottom:4px;">
+              <strong>${roleLabels[role]}</strong>
+              <span id="heading${level}StyleInfo" class="hint" style="margin-left:8px;"></span>
+            </div>
+            <div class="inline">
+              <label>Family</label>
+              <input id="heading${level}Family" class="w-200" type="text" placeholder="Times New Roman" />
+              <label>Size</label>
+              <input id="heading${level}Size" class="w-80" type="number" min="6" max="96" step="1" placeholder="18" />
+              <label><input id="heading${level}Bold" type="checkbox" /> Bold</label>
+              <label><input id="heading${level}Italic" type="checkbox" /> Italic</label>
+              <label><input id="heading${level}AllCaps" type="checkbox" /> ALL CAPS</label>
+            </div>
+          `;
+          container.appendChild(section);
+        }
+
+        if (params.family) $(`heading${level}Family`).placeholder = params.family;
+        if (params.size_pt) $(`heading${level}Size`).placeholder = String(params.size_pt);
+        if (params.bold) $(`heading${level}Bold`).checked = true;
+        if (params.all_caps) $(`heading${level}AllCaps`).checked = true;
+        const info = $(`heading${level}StyleInfo`);
+        if (info) {
+          info.innerHTML = `Word style: "<b>${params._style_name}</b>" (${params.family || 'theme'}, ${params.size_pt || '—'}pt)`;
+        }
       }
       
       // Auto-open the Headings details if we found heading styles

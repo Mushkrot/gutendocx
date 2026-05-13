@@ -81,6 +81,7 @@ Current iteration:
 7. Added batch timeout recovery:
    - `GET /batch/status/{batch_id}` reports whether a generated ZIP is ready;
    - UI polls this endpoint after `HTTP 524` on batch Apply and can recover/show the download when the server finishes after Cloudflare times out.
+8. Updated the Headings UI so Heading 1, Heading 2, and Heading 3 controls are visible by default; Heading 4 remains dynamic when detected.
 
 ### 2026-05-12
 
