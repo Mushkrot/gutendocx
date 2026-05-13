@@ -7,6 +7,21 @@ This repository is shared **only** for portfolio and demonstration purposes.
 
 ---
 
+## Codex / Agent Context
+
+When opening a new Codex session in this project, read:
+
+1. `PROJECT_LOG.md`
+2. `AGENTS.md`
+3. `.cursor/SESSION_HANDOFF.md`
+4. `Docs/Implementation_Status_2026-05-12.md`
+5. `Docs/Deploy_Runbook.md`
+6. `Docs/README.md`
+
+These files are the active project memory. Older Windsurf/Claude-specific files are dormant and should not be updated unless explicitly requested.
+
+---
+
 ## Key Features
 
 ### DOCX → DOCX Pipeline
@@ -88,6 +103,39 @@ http://localhost:8080
 ```
 
 LibreOffice Docker image and fonts configuration are described in the docs under `Docs/`.
+
+---
+
+## Production Operations
+
+Server-wide operations for this app are tracked in `/ai/SECURITY`.
+
+Current production model as of 2026-05-12:
+
+- Public URL: `https://gutendocx.unicloud.ca`.
+- Public ingress: Cloudflare Tunnel `mainserver` routes to `http://localhost:8000`.
+- Access control: Cloudflare Access protects the public hostname. This is intentional: GutenDocx is for one client plus the developer, not for public search or anonymous use.
+- Runtime service: `gutendocx.service`.
+- Runtime bind: `127.0.0.1:8000`; do not expose the FastAPI server directly on `0.0.0.0`.
+- Runtime user: currently `root`. This is a known legacy constraint on the server and should not be changed without a separate migration project.
+- Generated files: `Uploads/` and `output/` can contain client documents and should be treated as sensitive operational data.
+
+Production checks:
+
+```bash
+systemctl is-active gutendocx cloudflared server-firewall tailscaled ssh
+ss -lntup | rg ':8000'
+curl -fsS http://127.0.0.1:8000/health
+curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' https://gutendocx.unicloud.ca/
+```
+
+Expected behavior:
+
+- The app listens only on `127.0.0.1:8000`.
+- Local `/health` returns OK.
+- Public requests without a valid Access session redirect to Cloudflare Access login.
+
+Do not use `dev.sh` as a production launcher on the server. It is a development helper and runs with `--reload --host 0.0.0.0`.
 
 ---
 
