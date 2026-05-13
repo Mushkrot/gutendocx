@@ -1167,6 +1167,133 @@ class ClientAuditEventRequest(BaseModel):
     data: Optional[Dict[str, Any]] = None
 
 
+class JobsCleanupRequest(BaseModel):
+    older_than_days: int = 30
+    dry_run: bool = True
+    include_uploads: bool = False
+    include_outputs: bool = True
+
+
+def _is_safe_child(path: str, parent: str) -> bool:
+    try:
+        abs_path = os.path.abspath(path)
+        abs_parent = os.path.abspath(parent)
+        return os.path.commonpath([abs_path, abs_parent]) == abs_parent
+    except Exception:
+        return False
+
+
+def _cleanup_remove(path: str, dry_run: bool) -> Dict[str, Any]:
+    item: Dict[str, Any] = {"path": path, "removed": False}
+    try:
+        if os.path.isdir(path):
+            item["kind"] = "dir"
+        elif os.path.isfile(path):
+            item["kind"] = "file"
+            item["size_bytes"] = os.path.getsize(path)
+        else:
+            item["kind"] = "missing"
+            return item
+        if not dry_run:
+            if os.path.isdir(path):
+                import shutil
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+            item["removed"] = True
+    except Exception as e:
+        item["error"] = _bounded_str(e, 500)
+    return item
+
+
+def _job_cleanup_candidates(job: Dict[str, Any], include_outputs: bool, include_uploads: bool) -> List[str]:
+    paths: List[str] = []
+    job_id = job.get("id")
+    if job_id:
+        paths.append(_job_path(str(job_id)))
+
+    payload = job.get("request_payload") if isinstance(job.get("request_payload"), dict) else {}
+    batch_id = payload.get("batch_id") or job.get("batch_id")
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+
+    if include_outputs:
+        for key in ("output_path", "report_path"):
+            val = result.get(key) or job.get(key)
+            if isinstance(val, str) and _is_safe_child(val, OUTPUT_DIR):
+                paths.append(val)
+        if batch_id:
+            for candidate in (
+                os.path.join(OUTPUT_DIR, str(batch_id)),
+                os.path.join(OUTPUT_DIR, f"{batch_id}.zip"),
+                os.path.join(OUTPUT_DIR, f"{batch_id}_report.xlsx"),
+            ):
+                if _is_safe_child(candidate, OUTPUT_DIR):
+                    paths.append(candidate)
+
+    if include_uploads and batch_id:
+        up = os.path.join(UPLOADS_DIR, str(batch_id))
+        if _is_safe_child(up, UPLOADS_DIR):
+            paths.append(up)
+
+    seen = set()
+    out = []
+    for p in paths:
+        ap = os.path.abspath(str(p))
+        if ap in seen:
+            continue
+        seen.add(ap)
+        out.append(ap)
+    return out
+
+
+@app.post("/jobs/cleanup")
+def cleanup_jobs(req: JobsCleanupRequest, request: Request) -> Dict[str, Any]:
+    days = max(1, int(req.older_than_days or 30))
+    cutoff_ms = _now_ms() - days * 24 * 60 * 60 * 1000
+    eligible_statuses = {"completed", "failed", "interrupted", "cancelled"}
+    items: List[Dict[str, Any]] = []
+    jobs_seen = 0
+
+    with JOB_LOCK:
+        try:
+            names = sorted(os.listdir(JOBS_DIR))
+        except Exception:
+            names = []
+        for name in names:
+            if not name.endswith(".json"):
+                continue
+            job = _load_job_file(os.path.join(JOBS_DIR, name))
+            if not job:
+                continue
+            if job.get("status") not in eligible_statuses:
+                continue
+            finished = job.get("finished_at") or job.get("updated_at") or job.get("created_at") or 0
+            try:
+                finished_ms = int(finished)
+            except Exception:
+                finished_ms = 0
+            if finished_ms > cutoff_ms:
+                continue
+            jobs_seen += 1
+            for path in _job_cleanup_candidates(job, bool(req.include_outputs), bool(req.include_uploads)):
+                if not (_is_safe_child(path, OUTPUT_DIR) or _is_safe_child(path, UPLOADS_DIR)):
+                    continue
+                items.append(_cleanup_remove(path, bool(req.dry_run)))
+            if not req.dry_run and job.get("id"):
+                JOB_INDEX.pop(str(job["id"]), None)
+
+    summary = {
+        "ok": True,
+        "dry_run": bool(req.dry_run),
+        "older_than_days": days,
+        "jobs_matched": jobs_seen,
+        "items_count": len(items),
+        "items": items,
+    }
+    _audit_event("jobs.cleanup", request, **{k: v for k, v in summary.items() if k != "items"}, items=items[:100])
+    return summary
+
+
 @app.post("/jobs/apply")
 def start_apply_job(req: ApplyRequest, request: Request) -> Dict[str, Any]:
     batch_files = [p for p in (req.batch_files or []) if p]

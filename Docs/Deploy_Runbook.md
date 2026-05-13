@@ -107,6 +107,20 @@ Job JSON includes per-file status records:
 
 Batch jobs support partial success: if one file fails, the job can still complete and return a ZIP for successful files plus an XLSX report with `Status` and `Error` columns.
 
+## Job Cleanup
+
+Old completed/failed/interrupted job records and related outputs can be cleaned through:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8000/jobs/cleanup \
+  -H 'Content-Type: application/json' \
+  -d '{"older_than_days":30,"dry_run":true,"include_outputs":true,"include_uploads":false}'
+```
+
+Default is `dry_run: true`. Review the returned `items` before running with `dry_run: false`.
+
+Cleanup only considers finished jobs and only removes paths under `output/` and, when explicitly enabled, `Uploads/`.
+
 Legacy recovery remains available for older synchronous `/apply` flows. Large synchronous batch Apply requests can exceed Cloudflare's request timeout even when the server continues processing and eventually writes the ZIP. The legacy UI recovery endpoint is:
 
 ```bash

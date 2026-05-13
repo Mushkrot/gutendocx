@@ -40,6 +40,7 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Job state is persisted under `output/jobs/`.
 - Duplicate queued/running jobs are reused based on a hash of batch files and Apply options, reducing accidental double processing after visible timeouts.
 - Stage A hardening is implemented: job JSON tracks per-file `queued/running/completed/failed`, batch Apply supports partial success, and batch XLSX reports include `Status` and `Error`.
+- Stage B cleanup is implemented: `POST /jobs/cleanup` defaults to dry-run and can remove old finished jobs plus related output/upload artifacts under safe directories.
 - Legacy `/batch/status/{batch_id}` remains available as a fallback/recovery endpoint.
 
 2026-05-13 OpenAI prompting/AI usage analysis:
