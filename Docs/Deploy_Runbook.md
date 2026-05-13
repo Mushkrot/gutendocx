@@ -98,6 +98,15 @@ output/jobs/
 
 The UI polls `GET /jobs/<job_id>` until the job reaches `completed`, then uses the returned download metadata. Duplicate protection reuses an existing queued/running job when the same batch/options signature is submitted again.
 
+Job JSON includes per-file status records:
+
+- `queued`
+- `running`
+- `completed`
+- `failed`
+
+Batch jobs support partial success: if one file fails, the job can still complete and return a ZIP for successful files plus an XLSX report with `Status` and `Error` columns.
+
 Legacy recovery remains available for older synchronous `/apply` flows. Large synchronous batch Apply requests can exceed Cloudflare's request timeout even when the server continues processing and eventually writes the ZIP. The legacy UI recovery endpoint is:
 
 ```bash

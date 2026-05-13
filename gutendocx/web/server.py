@@ -433,6 +433,7 @@ def _add_ai_usage(totals: Dict[str, Any], usage: Optional[Dict[str, Any]], event
 JOB_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="gutendocx-job")
 JOB_LOCK = threading.RLock()
 JOB_INDEX: Dict[str, Dict[str, Any]] = {}
+JOB_CONTEXT = threading.local()
 
 
 def _now_ms() -> int:
@@ -534,6 +535,20 @@ def _job_public(job: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _job_progress(job: Dict[str, Any]) -> Dict[str, Any]:
+    files = job.get("files")
+    if isinstance(files, list) and files:
+        total = len(files)
+        processed = len([f for f in files if isinstance(f, dict) and f.get("status") in ("completed", "failed", "skipped")])
+        failed = len([f for f in files if isinstance(f, dict) and f.get("status") == "failed"])
+        current = next((f for f in files if isinstance(f, dict) and f.get("status") == "running"), None)
+        return {
+            "total": total,
+            "processed": processed,
+            "succeeded": len([f for f in files if isinstance(f, dict) and f.get("status") == "completed"]),
+            "failed": failed,
+            "current_file": current.get("name") if isinstance(current, dict) else None,
+            "ready": bool(job.get("status") == "completed" and job.get("download")),
+        }
     payload = job.get("request_payload") or {}
     batch_files = payload.get("batch_files") if isinstance(payload, dict) else []
     total = len(batch_files) if isinstance(batch_files, list) else 0
@@ -572,10 +587,109 @@ def _job_progress(job: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "total": total,
         "processed": processed,
+        "succeeded": processed,
+        "failed": 0,
         "output_count": output_count,
         "current_file": current_file,
         "ready": ready,
     }
+
+
+def _current_job_id() -> Optional[str]:
+    return getattr(JOB_CONTEXT, "job_id", None)
+
+
+def _init_job_files(job_id: str, batch_files: List[str]) -> None:
+    with JOB_LOCK:
+        job = JOB_INDEX.get(job_id)
+        if not job:
+            return
+        if not isinstance(job.get("files"), list) or len(job.get("files") or []) != len(batch_files):
+            job["files"] = [
+                {
+                    "index": i,
+                    "path": path,
+                    "name": os.path.basename(str(path)),
+                    "status": "queued",
+                }
+                for i, path in enumerate(batch_files)
+            ]
+        _save_job(job)
+
+
+def _update_job_file(job_id: Optional[str], index: int, **fields: Any) -> None:
+    if not job_id:
+        return
+    with JOB_LOCK:
+        job = JOB_INDEX.get(job_id)
+        if not job:
+            return
+        files = job.get("files")
+        if not isinstance(files, list) or index < 0 or index >= len(files):
+            return
+        rec = files[index]
+        if not isinstance(rec, dict):
+            return
+        rec.update(fields)
+        rec["updated_at"] = _now_ms()
+        _save_job(job)
+
+
+def _job_file_started(index: int, path: str, total: int) -> None:
+    job_id = _current_job_id()
+    _update_job_file(job_id, index, status="running", started_at=_now_ms())
+    _audit_event(
+        "job.file.started",
+        None,
+        job_id=job_id,
+        index=index,
+        total=total,
+        input=_file_ref(path),
+    )
+
+
+def _job_file_completed(index: int, path: str, result: Dict[str, Any], total: int) -> None:
+    job_id = _current_job_id()
+    _update_job_file(
+        job_id,
+        index,
+        status="completed",
+        finished_at=_now_ms(),
+        output=_file_ref(result.get("output_path")),
+        pdf_output=_file_ref(result.get("pdf_output_path")),
+    )
+    _audit_event(
+        "job.file.completed",
+        None,
+        job_id=job_id,
+        index=index,
+        total=total,
+        input=_file_ref(path),
+        output=_file_ref(result.get("output_path")),
+        pdf_output=_file_ref(result.get("pdf_output_path")),
+    )
+
+
+def _job_file_failed(index: int, path: str, error: BaseException, total: int) -> None:
+    job_id = _current_job_id()
+    _update_job_file(
+        job_id,
+        index,
+        status="failed",
+        finished_at=_now_ms(),
+        error_type=type(error).__name__,
+        error=_bounded_str(error, 1000),
+    )
+    _audit_event(
+        "job.file.failed",
+        None,
+        job_id=job_id,
+        index=index,
+        total=total,
+        input=_file_ref(path),
+        error_type=type(error).__name__,
+        error=_bounded_str(error, 1000),
+    )
 
 
 def _find_running_job(signature: str) -> Optional[Dict[str, Any]]:
@@ -596,7 +710,11 @@ def _run_apply_job(job_id: str) -> None:
     try:
         payload = copy.deepcopy(job.get("request_payload") or {})
         req = ApplyRequest(**payload)
-        result = unified_apply(req, None)
+        JOB_CONTEXT.job_id = job_id
+        try:
+            result = unified_apply(req, None)
+        finally:
+            JOB_CONTEXT.job_id = None
         with JOB_LOCK:
             job = JOB_INDEX.get(job_id) or job
             job["status"] = "completed"
@@ -856,7 +974,7 @@ def _write_batch_report_xlsx(rows: List[Dict[str, Any]], output_path: str) -> st
         os.makedirs(out_dir, exist_ok=True)
     wb = Workbook()
     ws = wb.active
-    ws.append(["Filename", "Title", "Subtitle", "Author", "Pages"])
+    ws.append(["Filename", "Title", "Subtitle", "Author", "Pages", "Status", "Error"])
 
     # Format header
     header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -874,6 +992,8 @@ def _write_batch_report_xlsx(rows: List[Dict[str, Any]], output_path: str) -> st
                 str(r.get("subtitle") or ""),
                 str(r.get("author") or ""),
                 pages_val,
+                str(r.get("status") or "completed"),
+                str(r.get("error") or ""),
             ]
         )
 
@@ -883,7 +1003,7 @@ def _write_batch_report_xlsx(rows: List[Dict[str, Any]], output_path: str) -> st
         row[0].alignment = pages_alignment
 
     # Autofilter on header row for all populated rows
-    ws.auto_filter.ref = f"A1:E{ws.max_row}"
+    ws.auto_filter.ref = f"A1:G{ws.max_row}"
     ws.freeze_panes = "A2"
 
     wb.save(output_path)
@@ -1079,6 +1199,15 @@ def start_apply_job(req: ApplyRequest, request: Request) -> Dict[str, Any]:
             "updated_at": _now_ms(),
             "request_summary": _apply_request_summary(req),
             "request_payload": payload,
+            "files": [
+                {
+                    "index": i,
+                    "path": path,
+                    "name": os.path.basename(str(path)),
+                    "status": "queued",
+                }
+                for i, path in enumerate(batch_files)
+            ],
         }
         JOB_INDEX[job_id] = job
         _save_job(job)
@@ -2060,135 +2189,44 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                 if os.path.isdir(candidate):
                     batch_root = os.path.abspath(candidate)
 
-            for path in batch_files:
-                inp_abs = os.path.abspath(os.path.join(os.getcwd(), path))
-                rel_dir = ""
-                if batch_root:
-                    try:
-                        rel_to_root = os.path.relpath(inp_abs, batch_root)
-                    except Exception:
-                        rel_to_root = None
-                    if rel_to_root and not str(rel_to_root).startswith(".."):
-                        rel_dir = os.path.dirname(str(rel_to_root))
-
-                file_out_dir = os.path.join(out_dir, batch_name, rel_dir) if rel_dir else os.path.join(out_dir, batch_name)
-                os.makedirs(file_out_dir, exist_ok=True)
-
-                cfg_file = copy.deepcopy(cfg)
-                out_cfg_file = (cfg_file.get("output", {}) or {})
-                out_cfg_file["dir"] = file_out_dir
-                cfg_file["output"] = out_cfg_file
-
+            _init_job_files(_current_job_id() or "", batch_files)
+            for file_index, path in enumerate(batch_files):
+                _job_file_started(file_index, path, len(batch_files))
                 r: Dict[str, Any] = {}
-                current = path
+                pdf_path = None
+                try:
+                    inp_abs = os.path.abspath(os.path.join(os.getcwd(), path))
+                    rel_dir = ""
+                    if batch_root:
+                        try:
+                            rel_to_root = os.path.relpath(inp_abs, batch_root)
+                        except Exception:
+                            rel_to_root = None
+                        if rel_to_root and not str(rel_to_root).startswith(".."):
+                            rel_dir = os.path.dirname(str(rel_to_root))
 
-                if req.apply_cover:
-                    cover_res = run_cover_pipeline(
-                        input_path=current,
-                        config=cfg_file,
-                        out_dir=file_out_dir,
-                        dry_run=False,
-                        no_layout=True,
-                        vision=bool(req.vision),
-                    )
-                    r["cover"] = cover_res
-                    try:
-                        det = (cover_res.get("detection") if isinstance(cover_res, dict) else None) or None
-                        if isinstance(det, dict):
-                            _add_ai_usage(
-                                ai_totals,
-                                det.get("ai_usage"),
-                                {
-                                    "batch_id": req.batch_id,
-                                    "input_path": path,
-                                    "kind": "cover_vision",
-                                },
-                            )
-                    except Exception:
-                        pass
-                    if cover_res.get("output_path"):
-                        current = cover_res["output_path"]
+                    file_out_dir = os.path.join(out_dir, batch_name, rel_dir) if rel_dir else os.path.join(out_dir, batch_name)
+                    os.makedirs(file_out_dir, exist_ok=True)
 
-                if req.apply_body:
-                    body_res = apply_whole_document(
-                        input_path=current,
-                        config=cfg_file,
-                    )
-                    r["body"] = body_res
-                    if body_res.get("output_path"):
-                        current = body_res["output_path"]
+                    cfg_file = copy.deepcopy(cfg)
+                    out_cfg_file = (cfg_file.get("output", {}) or {})
+                    out_cfg_file["dir"] = file_out_dir
+                    cfg_file["output"] = out_cfg_file
 
-                r["output_path"] = current
+                    current = path
 
-                toc_cfg = (cfg_file.get("toc", {}) or {})
-                lo_cfg = (toc_cfg.get("libreoffice", {}) or {})
-                soffice_bin = lo_cfg.get("binary") or "soffice"
-                timeout = int(lo_cfg.get("timeout", 120))
-                use_docker = bool(lo_cfg.get("use_docker", True))
-                docker_image = lo_cfg.get("docker_image")
-
-                lo_input = current
-                if req.update_toc:
-                    toc_mode = req.toc_mode or "structured"
-                    toc_res = build_toc(input_path=lo_input, config=cfg_file, mode=toc_mode)
-                    pre_lo_path = toc_res.get("output_path")
-                    if pre_lo_path:
-                        lo_input = pre_lo_path
-                    r["toc"] = toc_res
-
-                lo_res = run_libreoffice_convert(
-                    lo_input,
-                    soffice=soffice_bin,
-                    out_dir=file_out_dir,
-                    timeout=timeout,
-                    use_docker=use_docker,
-                    docker_image=docker_image,
-                )
-                if lo_res.get("ok"):
-                    final_path = lo_res.get("output_path")
-                    if final_path:
-                        r["output_path"] = final_path
-                    pdf_out = lo_res.get("pdf_output_path")
-                    if pdf_out:
-                        r["pdf_output_path"] = pdf_out
-                    r["libreoffice_ok"] = True
-                else:
-                    r["libreoffice_error"] = lo_res.get("error") or lo_res.get("stderr")
-
-                results.append({"input_path": path, "result": r})
-
-                out_path = r.get("output_path")
-                pdf_path = r.get("pdf_output_path")
-                if out_path:
-                    zip_items.append(
-                        {
-                            "input_path": path,
-                            "output_path": str(out_path),
-                            "pdf_path": str(pdf_path) if pdf_path else None,
-                        }
-                    )
-
-                detection = None
-                if req.apply_cover:
-                    try:
-                        cover_part = r.get("cover")
-                        if isinstance(cover_part, dict):
-                            detection = cover_part.get("detection")
-                    except Exception:
-                        detection = None
-                if not detection:
-                    try:
-                        det_only = run_cover_pipeline(
-                            input_path=path,
+                    if req.apply_cover:
+                        cover_res = run_cover_pipeline(
+                            input_path=current,
                             config=cfg_file,
                             out_dir=file_out_dir,
-                            dry_run=True,
+                            dry_run=False,
                             no_layout=True,
                             vision=bool(req.vision),
                         )
-                        detection = det_only.get("detection")
+                        r["cover"] = cover_res
                         try:
-                            det = det_only.get("detection") if isinstance(det_only, dict) else None
+                            det = (cover_res.get("detection") if isinstance(cover_res, dict) else None) or None
                             if isinstance(det, dict):
                                 _add_ai_usage(
                                     ai_totals,
@@ -2196,24 +2234,140 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                                     {
                                         "batch_id": req.batch_id,
                                         "input_path": path,
-                                        "kind": "cover_vision_dry_run",
+                                        "kind": "cover_vision",
                                     },
                                 )
                         except Exception:
                             pass
-                    except Exception:
-                        detection = None
+                        if cover_res.get("output_path"):
+                            current = cover_res["output_path"]
 
-                texts = _extract_cover_texts_for_report(path, detection)
-                report_rows.append(
-                    {
-                        "author": texts.get("author") or "",
-                        "title": texts.get("title") or "",
-                        "subtitle": texts.get("subtitle") or "",
-                        "pages": _count_pdf_pages(pdf_path),
-                        "filename": os.path.basename(path),
+                    if req.apply_body:
+                        body_res = apply_whole_document(
+                            input_path=current,
+                            config=cfg_file,
+                        )
+                        r["body"] = body_res
+                        if body_res.get("output_path"):
+                            current = body_res["output_path"]
+
+                    r["output_path"] = current
+
+                    toc_cfg = (cfg_file.get("toc", {}) or {})
+                    lo_cfg = (toc_cfg.get("libreoffice", {}) or {})
+                    soffice_bin = lo_cfg.get("binary") or "soffice"
+                    timeout = int(lo_cfg.get("timeout", 120))
+                    use_docker = bool(lo_cfg.get("use_docker", True))
+                    docker_image = lo_cfg.get("docker_image")
+
+                    lo_input = current
+                    if req.update_toc:
+                        toc_mode = req.toc_mode or "structured"
+                        toc_res = build_toc(input_path=lo_input, config=cfg_file, mode=toc_mode)
+                        pre_lo_path = toc_res.get("output_path")
+                        if pre_lo_path:
+                            lo_input = pre_lo_path
+                        r["toc"] = toc_res
+
+                    lo_res = run_libreoffice_convert(
+                        lo_input,
+                        soffice=soffice_bin,
+                        out_dir=file_out_dir,
+                        timeout=timeout,
+                        use_docker=use_docker,
+                        docker_image=docker_image,
+                    )
+                    if lo_res.get("ok"):
+                        final_path = lo_res.get("output_path")
+                        if final_path:
+                            r["output_path"] = final_path
+                        pdf_out = lo_res.get("pdf_output_path")
+                        if pdf_out:
+                            r["pdf_output_path"] = pdf_out
+                        r["libreoffice_ok"] = True
+                    else:
+                        r["libreoffice_error"] = lo_res.get("error") or lo_res.get("stderr")
+
+                    results.append({"input_path": path, "status": "completed", "result": r})
+
+                    out_path = r.get("output_path")
+                    pdf_path = r.get("pdf_output_path")
+                    if out_path:
+                        zip_items.append(
+                            {
+                                "input_path": path,
+                                "output_path": str(out_path),
+                                "pdf_path": str(pdf_path) if pdf_path else None,
+                            }
+                        )
+
+                    detection = None
+                    if req.apply_cover:
+                        try:
+                            cover_part = r.get("cover")
+                            if isinstance(cover_part, dict):
+                                detection = cover_part.get("detection")
+                        except Exception:
+                            detection = None
+                    if not detection:
+                        try:
+                            det_only = run_cover_pipeline(
+                                input_path=path,
+                                config=cfg_file,
+                                out_dir=file_out_dir,
+                                dry_run=True,
+                                no_layout=True,
+                                vision=bool(req.vision),
+                            )
+                            detection = det_only.get("detection")
+                            try:
+                                det = det_only.get("detection") if isinstance(det_only, dict) else None
+                                if isinstance(det, dict):
+                                    _add_ai_usage(
+                                        ai_totals,
+                                        det.get("ai_usage"),
+                                        {
+                                            "batch_id": req.batch_id,
+                                            "input_path": path,
+                                            "kind": "cover_vision_dry_run",
+                                        },
+                                    )
+                            except Exception:
+                                pass
+                        except Exception:
+                            detection = None
+
+                    texts = _extract_cover_texts_for_report(path, detection)
+                    report_rows.append(
+                        {
+                            "author": texts.get("author") or "",
+                            "title": texts.get("title") or "",
+                            "subtitle": texts.get("subtitle") or "",
+                            "pages": _count_pdf_pages(pdf_path),
+                            "filename": os.path.basename(path),
+                            "status": "completed",
+                        }
+                    )
+                    _job_file_completed(file_index, path, r, len(batch_files))
+                except Exception as file_error:
+                    r = {
+                        "error": _bounded_str(file_error, 1000),
+                        "error_type": type(file_error).__name__,
                     }
-                )
+                    results.append({"input_path": path, "status": "failed", "result": r})
+                    report_rows.append(
+                        {
+                            "author": "",
+                            "title": "",
+                            "subtitle": "",
+                            "pages": None,
+                            "filename": os.path.basename(path),
+                            "status": "failed",
+                            "error": _bounded_str(file_error, 1000),
+                        }
+                    )
+                    _job_file_failed(file_index, path, file_error, len(batch_files))
+                    continue
 
             report_path: Optional[str] = None
             report_error: Optional[str] = None

@@ -39,6 +39,7 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Batch Apply in the Web UI now starts a background job and polls job status instead of holding a long `/apply` request open through Cloudflare.
 - Job state is persisted under `output/jobs/`.
 - Duplicate queued/running jobs are reused based on a hash of batch files and Apply options, reducing accidental double processing after visible timeouts.
+- Stage A hardening is implemented: job JSON tracks per-file `queued/running/completed/failed`, batch Apply supports partial success, and batch XLSX reports include `Status` and `Error`.
 - Legacy `/batch/status/{batch_id}` remains available as a fallback/recovery endpoint.
 
 2026-05-13 OpenAI prompting/AI usage analysis:

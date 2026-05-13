@@ -796,12 +796,14 @@
         const progress = (job && job.progress) || {};
         const total = progress.total || job.batch_count || 0;
         const processed = progress.processed || 0;
+        const failed = progress.failed || 0;
+        const failedText = failed ? `, ${failed} failed` : '';
         const current = progress.current_file ? ` (${progress.current_file})` : '';
         const status = job && job.status ? job.status : 'unknown';
         if (status === 'queued') {
-          setBusy(true, `Queued batch job… ${processed}/${total}`);
+          setBusy(true, `Queued batch job… ${processed}/${total}${failedText}`);
         } else if (status === 'running') {
-          setBusy(true, `Processing batch… ${processed}/${total}${current}`);
+          setBusy(true, `Processing batch… ${processed}/${total}${failedText}${current}`);
         }
         auditClient('apply_job_polled', {
           job_id: jobId,
