@@ -56,7 +56,7 @@ Current iteration:
 | Outputs | `Uploads/` and `output/` may contain client files and generated artifacts |
 | Server ops owner | `/ai/SECURITY` |
 | Port inventory | `/ai/PORTS.yaml` |
-| Git state | Pre-existing uncommitted code/config changes are present; inspect before committing |
+| Git state | Clean after 2026-05-13 full commit/push |
 | Upload input | Normal multi-file `.docx` picker; do not use `webkitdirectory` for the main "Upload files" button unless adding a separate folder-upload flow |
 
 ## Completed Work
@@ -82,11 +82,36 @@ Current iteration:
 ## Next Tasks
 
 1. **Client Windows retest:** ask the client to hard-refresh (`Ctrl+F5` / `Ctrl+Shift+R`) and confirm `Upload files...` opens a DOCX file picker.
-2. **Reconcile uncommitted changes:** inspect existing modified code/config files before any new implementation work or commit.
-3. **Service hardening without user migration:** keep root runtime, but later test a systemd drop-in such as `NoNewPrivileges=true`, `PrivateTmp=true`, and constrained write paths.
-4. **Data retention:** decide whether to periodically clean old `Uploads/` and `output/` files.
-5. **Access verification:** keep Cloudflare Access enabled for `gutendocx.unicloud.ca`; do not convert the app to anonymous public access without explicit approval.
-6. **Production docs upkeep:** after non-trivial app or operations changes, update `PROJECT_LOG.md`, `.cursor/SESSION_HANDOFF.md`, `Docs/Implementation_Status_2026-05-12.md`, and `Docs/Deploy_Runbook.md` if affected.
+2. **AI model refresh:** review newly available OpenAI/ChatGPT models up to ChatGPT 5.5, update selectable model list, update token pricing, benchmark quality/cost/latency, and decide whether to replace the current default/optimal model choice.
+3. **AI cost admin dashboard:** review the existing dashboard from another project, extract its principles/design, and adapt it to GutenDocx for AI request cost visibility.
+4. **Potential UI redesign:** evaluate the alternative UI design from another project and decide whether to migrate GutenDocx to that design.
+5. **Users and permissions:** introduce admin/user roles with separate permissions and dashboards; this would change the current security model and must be designed before implementation.
+6. **Service hardening without user migration:** keep root runtime, but later test a systemd drop-in such as `NoNewPrivileges=true`, `PrivateTmp=true`, and constrained write paths.
+7. **Data retention:** decide whether to periodically clean old `Uploads/` and `output/` files.
+8. **Access verification:** keep Cloudflare Access enabled for `gutendocx.unicloud.ca`; do not convert the app to anonymous public access without explicit approval.
+9. **Production docs upkeep:** after non-trivial app or operations changes, update `PROJECT_LOG.md`, `.cursor/SESSION_HANDOFF.md`, `Docs/Implementation_Status_2026-05-12.md`, and `Docs/Deploy_Runbook.md` if affected.
+
+## Future Roadmap Ideas
+
+These are future planning items, not permission to implement without a separate request:
+
+1. **OpenAI/ChatGPT model and pricing refresh**
+   - Check all relevant models released since this platform was first built, including models up to ChatGPT 5.5.
+   - Add appropriate models to the UI selectable model list.
+   - Update per-token pricing used for AI cost calculations.
+   - Benchmark candidate models for this workflow and compare quality, cost, speed, reliability, and JSON/schema compliance.
+   - Re-evaluate the current "optimal" model choice; GPT-4o Mini was previously treated as the cost-effective baseline, but the best choice may have changed.
+2. **Administrative AI cost dashboard**
+   - User has an existing dashboard from another project.
+   - Review that implementation, extract useful principles, and port the appropriate approach to GutenDocx.
+   - Dashboard should expose AI request cost, model usage, token totals, and useful operational summaries.
+3. **Possible UI redesign**
+   - User has an alternative design from another project.
+   - Review it and assess whether GutenDocx should migrate to a substantially different interface.
+4. **User accounts and permissions**
+   - Add admin and normal user concepts.
+   - Provide different permissions and dashboards per role.
+   - This changes the current "Cloudflare Access only, no built-in login" model, so it requires explicit security/product design before implementation.
 
 ## Useful Verification Commands
 

@@ -67,12 +67,22 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 ## Next Recommended Work
 
 1. Confirm the client Windows retest for `Upload files...`.
-2. Keep Cloudflare Access enabled for `gutendocx.unicloud.ca`.
-3. Add server-side hardening around the existing root runtime without changing users first:
+2. Plan an AI model/pricing refresh: review newer models up to ChatGPT 5.5, update model choices/pricing, and benchmark the best model for this workflow.
+3. Plan an admin AI cost dashboard based on the user's existing dashboard from another project.
+4. Evaluate a possible UI redesign using the user's existing design from another project.
+5. Design admin/user roles with different permissions and dashboards before implementing built-in auth.
+6. Keep Cloudflare Access enabled for `gutendocx.unicloud.ca`.
+7. Add server-side hardening around the existing root runtime without changing users first:
    - consider a systemd drop-in with `NoNewPrivileges=true`, `PrivateTmp=true`, and narrowly scoped write paths after testing in a maintenance window.
    - do not change this casually because the app uses LibreOffice/Docker and writes to project directories.
-4. Add a cleanup/retention policy for `Uploads/` and `output/` if client files should not stay on disk indefinitely.
-5. Reconcile pre-existing uncommitted changes before any code-level security edits.
+8. Add a cleanup/retention policy for `Uploads/` and `output/` if client files should not stay on disk indefinitely.
+
+## Future Roadmap Notes
+
+- AI model refresh should include newly available OpenAI/ChatGPT models up to ChatGPT 5.5, UI model-list updates, current token pricing, and workflow-specific testing to select an optimal model.
+- Admin dashboard work should reuse principles from the user's existing AI cost dashboard in another project.
+- UI redesign work should review the user's existing alternate design from another project before changing GutenDocx.
+- Built-in users/roles would be a security model change from the current Cloudflare Access-only approach.
 
 ## Known Commands
 

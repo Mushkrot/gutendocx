@@ -65,11 +65,20 @@ This project is not a public discovery/SEO site. It is intended for one client p
 
 ## Known Current Issues / Risks
 
-1. The repo has pre-existing uncommitted code/config changes. Inspect `git status` and diffs before committing or editing.
-2. Runtime is root. This is accepted for now, but systemd hardening should be tested later without changing the runtime user first.
-3. `Uploads/` and `output/` do not currently have a documented retention policy.
-4. Request path/config handling assumes trusted users behind Cloudflare Access. Do not remove Access without first hardening app-level auth and path validation.
+1. Runtime is root. This is accepted for now, but systemd hardening should be tested later without changing the runtime user first.
+2. `Uploads/` and `output/` do not currently have a documented retention policy.
+3. Request path/config handling assumes trusted users behind Cloudflare Access. Do not remove Access without first hardening app-level auth and path validation.
+4. Built-in users/roles are a future roadmap item and would change the current Cloudflare Access-only app security model.
 5. Local docs are older and some historical files describe superseded LibreOffice macro approaches. Prefer `Docs/Integration_report 02.md` for the current LibreOffice/PyUNO architecture.
+
+## Future Roadmap
+
+These items are captured for future planning and should not be implemented without a separate explicit request:
+
+1. Review newly available OpenAI/ChatGPT models up to ChatGPT 5.5, add suitable options to the UI, update token pricing, and test/benchmark which model is optimal for GutenDocx.
+2. Build an administrative AI cost dashboard by reviewing the user's existing dashboard from another project and adapting the useful principles to GutenDocx.
+3. Evaluate a possible full UI redesign based on another existing project design the user will provide.
+4. Add users and roles: admin and normal user permissions, separate dashboards, and the required app-auth/security model around them.
 
 ## Recent Changes
 

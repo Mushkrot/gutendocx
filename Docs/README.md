@@ -27,6 +27,13 @@
 - `Uploads/` and `output/` are operational data directories and may contain client files.
 - The primary Web UI upload control should remain a normal multi-file `.docx` picker for Windows compatibility. Use a separate clearly labeled control if folder upload is reintroduced.
 
+## Future Planning Topics
+
+- Refresh AI model choices and pricing, including newer OpenAI/ChatGPT models up to ChatGPT 5.5, then benchmark for the best quality/cost/latency tradeoff.
+- Add an administrative AI cost dashboard based on the user's existing dashboard from another project.
+- Evaluate a possible full UI redesign using the user's existing design from another project.
+- Add admin/user roles with distinct permissions and dashboards after designing the app-auth/security changes.
+
 ## Historical / Local Assets
 
 - `Model API Prices.xlsx` and `Техническое задание.xlsx` are historical/local reference files.
