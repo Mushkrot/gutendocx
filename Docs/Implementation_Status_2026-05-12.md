@@ -23,6 +23,7 @@ This project is not a public discovery/SEO site. It is intended for one client p
 - Runtime output:
   - `Uploads/` for uploaded DOCX files.
   - `output/` for generated DOCX/PDF/ZIP/report/vision artifacts.
+  - `output/jobs/` for persisted background job state.
   - `output/audit_events.jsonl` for structured diagnostic audit events.
 - Upload UX: the primary "Upload files" control is a normal multi-file `.docx` picker. Do not attach `webkitdirectory` to that control unless adding a separate, explicitly labeled folder-upload feature.
 
@@ -87,6 +88,7 @@ These items are captured for future planning and should not be implemented witho
 ## Recent Changes
 
 - **2026-05-13:** Saved official OpenAI prompt/model guide snapshots under `Docs/OpenAI_Guides/`, added `Docs/AI_Prompting_and_Usage_Analysis_2026-05-13.md`, and documented a cautious before/after QA rule for risky prompt/model/pipeline changes.
+- **2026-05-13:** Added background Apply jobs for batch processing with persisted job state, duplicate running-job reuse, `/jobs/apply`, `/jobs/{job_id}`, and Web UI polling to avoid Cloudflare `HTTP 524` as the normal batch path.
 - **2026-05-13:** Refreshed OpenAI model pricing in the Web UI and backend cost accounting tables, added `gpt-5.4-nano` as a selectable model, and removed the unverified `gpt-5.1-mini` UI option.
 - **2026-05-13:** Fixed Windows upload picker compatibility by changing the primary Web UI upload control to normal multi-file `.docx` selection with an explicit accept filter. Verified the running service serves the updated static HTML without restart.
 - **2026-05-13:** Committed pending app changes for AI usage/cost reporting, `gpt-5-mini` cover vision default, batch `/apply` processing, XLSX report output, PDF page counting, and cover detection improvements. Added `python-multipart`, `openpyxl`, and `pypdf` dependencies.

@@ -12,6 +12,11 @@
 
 Current iteration:
 
+- Added a background job system for batch Apply:
+  - `POST /jobs/apply` creates or reuses a queued/running job for the same batch/options signature.
+  - `GET /jobs/{job_id}` returns persisted status, progress estimate, result/download metadata, or failure details.
+  - Job state is stored under `output/jobs/`.
+  - The Web UI uses jobs for batch Apply, avoiding long browser/Cloudflare `/apply` requests as the normal path.
 - Saved official OpenAI prompt/model guide snapshots under `Docs/OpenAI_Guides/`.
 - Added `Docs/AI_Prompting_and_Usage_Analysis_2026-05-13.md` covering current AI usage, prompt/model considerations, Cloudflare timeout architecture, and the required cautious QA rule for risky prompt/model/pipeline changes.
 - Added the risky-change QA rule to `AGENTS.md`: commit baseline first, define before/after tests, compare results, and discuss prompt/model changes before implementation.

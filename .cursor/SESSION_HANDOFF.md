@@ -33,6 +33,14 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 
 ## Recent Audit
 
+2026-05-13 background batch jobs:
+
+- Added `POST /jobs/apply` and `GET /jobs/{job_id}`.
+- Batch Apply in the Web UI now starts a background job and polls job status instead of holding a long `/apply` request open through Cloudflare.
+- Job state is persisted under `output/jobs/`.
+- Duplicate queued/running jobs are reused based on a hash of batch files and Apply options, reducing accidental double processing after visible timeouts.
+- Legacy `/batch/status/{batch_id}` remains available as a fallback/recovery endpoint.
+
 2026-05-13 OpenAI prompting/AI usage analysis:
 
 - Saved official OpenAI prompt/model guide snapshots under `Docs/OpenAI_Guides/`.

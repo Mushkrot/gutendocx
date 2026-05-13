@@ -774,6 +774,52 @@
       return null;
     }
 
+    async function startApplyJob(payload) {
+      const json = await callApi('/jobs/apply', payload);
+      const job = json && json.job;
+      if (!job || !job.id) {
+        throw new Error('Job was not created');
+      }
+      auditClient(json.reused ? 'apply_job_reused' : 'apply_job_created', {
+        job_id: job.id,
+        status: job.status,
+        payload: auditPayloadSummary(payload)
+      });
+      return job;
+    }
+
+    async function pollApplyJob(jobId, maxAttempts = 720) {
+      if (!jobId) return null;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const data = await getJson(`/jobs/${encodeURIComponent(jobId)}`);
+        const job = data && data.job;
+        const progress = (job && job.progress) || {};
+        const total = progress.total || job.batch_count || 0;
+        const processed = progress.processed || 0;
+        const current = progress.current_file ? ` (${progress.current_file})` : '';
+        const status = job && job.status ? job.status : 'unknown';
+        if (status === 'queued') {
+          setBusy(true, `Queued batch job… ${processed}/${total}`);
+        } else if (status === 'running') {
+          setBusy(true, `Processing batch… ${processed}/${total}${current}`);
+        }
+        auditClient('apply_job_polled', {
+          job_id: jobId,
+          attempt,
+          status,
+          progress
+        });
+        if (status === 'completed') {
+          return job;
+        }
+        if (status === 'failed' || status === 'interrupted') {
+          throw new Error(job.error || `Job ${status}`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+      throw new Error('Job polling exhausted');
+    }
+
     function getPayload(opts = {}) {
       const { forceDryRun = false, includeDryRun = true, includeBatch = false } = opts;
       const styles = collectStyles();
@@ -1581,7 +1627,16 @@
       setButtonsDisabled(true);
       updateDownloadUi(null);
       try {
-        const json = await callApi('/apply', payload);
+        let json = null;
+        if (hasBatch) {
+          const job = await startApplyJob(payload);
+          $("output").value = JSON.stringify({ job }, null, 2);
+          showToast('info', 'Batch job started. Processing continues in the background.', 7000);
+          const completedJob = await pollApplyJob(job.id);
+          json = (completedJob && completedJob.result) || completedJob;
+        } else {
+          json = await callApi('/apply', payload);
+        }
         $("output").value = JSON.stringify(json, null, 2);
         await maybeShowPreview(json);
         renderSpentCost(json);

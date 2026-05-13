@@ -1,10 +1,15 @@
 from typing import Optional, Any, Dict, List
+import hashlib
 import json
 import os
 import copy
 import re
+import threading
 import time
+import traceback
+import uuid
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.staticfiles import StaticFiles
@@ -63,6 +68,11 @@ except Exception:
 
 AI_COSTS_JSONL = os.path.join(OUTPUT_DIR, "ai_costs.jsonl")
 AUDIT_EVENTS_JSONL = os.path.join(OUTPUT_DIR, "audit_events.jsonl")
+JOBS_DIR = os.path.join(OUTPUT_DIR, "jobs")
+try:
+    os.makedirs(JOBS_DIR, exist_ok=True)
+except Exception:
+    pass
 
 
 AI_PRICES_PER_1M = {
@@ -418,6 +428,210 @@ def _add_ai_usage(totals: Dict[str, Any], usage: Optional[Dict[str, Any]], event
     }
     evt.update(event)
     _append_jsonl(AI_COSTS_JSONL, evt)
+
+
+JOB_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="gutendocx-job")
+JOB_LOCK = threading.RLock()
+JOB_INDEX: Dict[str, Dict[str, Any]] = {}
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _job_path(job_id: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", str(job_id))
+    return os.path.join(JOBS_DIR, f"{safe}.json")
+
+
+def _json_safe(value: Any) -> Any:
+    try:
+        json.dumps(value)
+        return value
+    except Exception:
+        return _bounded_str(value, 1000)
+
+
+def _apply_job_signature(req: "ApplyRequest") -> str:
+    data = {
+        "batch_id": req.batch_id,
+        "batch_files": [p for p in (req.batch_files or []) if p],
+        "input": req.input,
+        "config_path": req.config_path,
+        "vision": bool(req.vision),
+        "no_layout": bool(req.no_layout),
+        "model": req.model,
+        "min_confidence": req.min_confidence,
+        "update_toc": bool(req.update_toc),
+        "toc_mode": req.toc_mode,
+        "apply_body": bool(req.apply_body),
+        "apply_cover": bool(req.apply_cover),
+        "styles": req.styles or {},
+    }
+    raw = json.dumps(data, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _save_job(job: Dict[str, Any]) -> None:
+    job_id = str(job.get("id") or "")
+    if not job_id:
+        return
+    job["updated_at"] = _now_ms()
+    tmp = _job_path(job_id) + ".tmp"
+    path = _job_path(job_id)
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(job, f, ensure_ascii=False, indent=2, default=str)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+
+
+def _load_job_file(path: str) -> Optional[Dict[str, Any]]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _load_jobs_index() -> None:
+    with JOB_LOCK:
+        JOB_INDEX.clear()
+        try:
+            names = sorted(os.listdir(JOBS_DIR))
+        except Exception:
+            names = []
+        for name in names:
+            if not name.endswith(".json"):
+                continue
+            job = _load_job_file(os.path.join(JOBS_DIR, name))
+            if not job or not job.get("id"):
+                continue
+            if job.get("status") in ("queued", "running"):
+                job["status"] = "interrupted"
+                job["error"] = "Server restarted before this job completed"
+                job["finished_at"] = job.get("finished_at") or _now_ms()
+                _save_job(job)
+            JOB_INDEX[str(job["id"])] = job
+
+
+def _job_public(job: Dict[str, Any]) -> Dict[str, Any]:
+    out = {k: v for k, v in job.items() if k not in ("request_payload", "traceback")}
+    req_payload = job.get("request_payload") or {}
+    batch_files = req_payload.get("batch_files") if isinstance(req_payload, dict) else None
+    if isinstance(batch_files, list):
+        out["batch_count"] = len(batch_files)
+    progress = _job_progress(job)
+    if progress:
+        out["progress"] = progress
+    return out
+
+
+def _job_progress(job: Dict[str, Any]) -> Dict[str, Any]:
+    payload = job.get("request_payload") or {}
+    batch_files = payload.get("batch_files") if isinstance(payload, dict) else []
+    total = len(batch_files) if isinstance(batch_files, list) else 0
+    batch_id = payload.get("batch_id") if isinstance(payload, dict) else None
+    output_path = None
+    result = job.get("result")
+    if isinstance(result, dict):
+        output_path = result.get("output_path")
+    ready = bool(output_path and os.path.exists(str(output_path)))
+    processed = 0
+    output_count = 0
+    current_file = None
+    if batch_id:
+        batch_dir = os.path.join(OUTPUT_DIR, str(batch_id))
+        try:
+            if os.path.isdir(batch_dir):
+                names = []
+                for root, _, files in os.walk(batch_dir):
+                    for fn in files:
+                        if fn.lower().endswith((".docx", ".pdf")):
+                            output_count += 1
+                            names.append(os.path.relpath(os.path.join(root, fn), batch_dir))
+                if total:
+                    docx_done = {
+                        os.path.splitext(os.path.basename(n))[0]
+                        for n in names
+                        if n.lower().endswith(".docx")
+                    }
+                    processed = min(total, len(docx_done))
+                    if processed < total and isinstance(batch_files, list):
+                        current_file = os.path.basename(str(batch_files[processed]))
+        except Exception:
+            pass
+    if ready:
+        processed = total or processed
+    return {
+        "total": total,
+        "processed": processed,
+        "output_count": output_count,
+        "current_file": current_file,
+        "ready": ready,
+    }
+
+
+def _find_running_job(signature: str) -> Optional[Dict[str, Any]]:
+    for job in JOB_INDEX.values():
+        if job.get("signature") == signature and job.get("status") in ("queued", "running"):
+            return job
+    return None
+
+
+def _run_apply_job(job_id: str) -> None:
+    with JOB_LOCK:
+        job = JOB_INDEX.get(job_id)
+        if not job:
+            return
+        job["status"] = "running"
+        job["started_at"] = _now_ms()
+        _save_job(job)
+    try:
+        payload = copy.deepcopy(job.get("request_payload") or {})
+        req = ApplyRequest(**payload)
+        result = unified_apply(req, None)
+        with JOB_LOCK:
+            job = JOB_INDEX.get(job_id) or job
+            job["status"] = "completed"
+            job["finished_at"] = _now_ms()
+            job["result"] = _json_safe(result)
+            if isinstance(result, dict):
+                job["download"] = result.get("download")
+                job["output_path"] = result.get("output_path")
+                job["ai_cost"] = result.get("ai_cost")
+            _save_job(job)
+        _audit_event("job.completed", None, job_id=job_id, result_summary=_job_public(job))
+    except Exception as e:
+        status_code = getattr(e, "status_code", None)
+        detail = getattr(e, "detail", None)
+        with JOB_LOCK:
+            job = JOB_INDEX.get(job_id) or {"id": job_id}
+            job["status"] = "failed"
+            job["finished_at"] = _now_ms()
+            job["error_type"] = type(e).__name__
+            job["error"] = _bounded_str(detail or e, 1000)
+            if status_code:
+                job["status_code"] = status_code
+            job["traceback"] = traceback.format_exc(limit=20)
+            JOB_INDEX[job_id] = job
+            _save_job(job)
+        _audit_event(
+            "job.failed",
+            None,
+            job_id=job_id,
+            error_type=type(e).__name__,
+            error=_bounded_str(detail or e, 1000),
+        )
+
+
+_load_jobs_index()
 
 FONTS_DIR = os.path.abspath(
     os.environ.get("GUTENDOCX_FONTS_DIR") or os.path.join(os.getcwd(), "fonts")
@@ -831,6 +1045,74 @@ class LearnCoverStylesRequest(BaseModel):
 class ClientAuditEventRequest(BaseModel):
     event: str
     data: Optional[Dict[str, Any]] = None
+
+
+@app.post("/jobs/apply")
+def start_apply_job(req: ApplyRequest, request: Request) -> Dict[str, Any]:
+    batch_files = [p for p in (req.batch_files or []) if p]
+    if not batch_files:
+        raise HTTPException(status_code=400, detail="Background jobs currently require batch_files")
+    if not req.apply_cover and not req.apply_body:
+        raise HTTPException(status_code=400, detail="At least one of apply_cover or apply_body must be True")
+
+    signature = _apply_job_signature(req)
+    with JOB_LOCK:
+        existing = _find_running_job(signature)
+        if existing:
+            _audit_event(
+                "job.apply.duplicate_reused",
+                request,
+                job_id=existing.get("id"),
+                signature=signature,
+                **_apply_request_summary(req),
+            )
+            return {"job": _job_public(existing), "reused": True}
+
+        job_id = f"job_{int(time.time())}_{uuid.uuid4().hex[:10]}"
+        payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+        job: Dict[str, Any] = {
+            "id": job_id,
+            "type": "apply",
+            "status": "queued",
+            "signature": signature,
+            "created_at": _now_ms(),
+            "updated_at": _now_ms(),
+            "request_summary": _apply_request_summary(req),
+            "request_payload": payload,
+        }
+        JOB_INDEX[job_id] = job
+        _save_job(job)
+        JOB_EXECUTOR.submit(_run_apply_job, job_id)
+
+    _audit_event(
+        "job.apply.created",
+        request,
+        job_id=job_id,
+        signature=signature,
+        **_apply_request_summary(req),
+    )
+    return {"job": _job_public(job), "reused": False}
+
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: str, request: Request) -> Dict[str, Any]:
+    with JOB_LOCK:
+        job = JOB_INDEX.get(job_id)
+        if not job:
+            job = _load_job_file(_job_path(job_id))
+            if job and job.get("id"):
+                JOB_INDEX[str(job["id"])] = job
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        public = _job_public(job)
+    _audit_event(
+        "job.checked",
+        request,
+        job_id=job_id,
+        status=public.get("status"),
+        progress=public.get("progress"),
+    )
+    return {"job": public}
 
 
 @app.post("/events/client")

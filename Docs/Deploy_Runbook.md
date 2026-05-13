@@ -81,13 +81,30 @@ tail -n 200 output/audit_events.jsonl
 
 ## Batch Timeout Recovery
 
-Large synchronous batch Apply requests can exceed Cloudflare's request timeout even when the server continues processing and eventually writes the ZIP. The UI polls this endpoint after `HTTP 524`:
+Batch Apply now uses background jobs so the browser does not keep a single long `/apply` request open through Cloudflare.
+
+Main endpoints:
+
+```bash
+POST /jobs/apply
+GET /jobs/<job_id>
+```
+
+Job state is persisted as JSON under:
+
+```text
+output/jobs/
+```
+
+The UI polls `GET /jobs/<job_id>` until the job reaches `completed`, then uses the returned download metadata. Duplicate protection reuses an existing queued/running job when the same batch/options signature is submitted again.
+
+Legacy recovery remains available for older synchronous `/apply` flows. Large synchronous batch Apply requests can exceed Cloudflare's request timeout even when the server continues processing and eventually writes the ZIP. The legacy UI recovery endpoint is:
 
 ```bash
 curl -fsS http://127.0.0.1:8000/batch/status/<batch_id>
 ```
 
-When `ready` is true, the response includes `download` metadata for the ZIP. This is a recovery mechanism, not a replacement for a future background job/progress system.
+When `ready` is true, the response includes `download` metadata for the ZIP.
 
 ## Restart Procedure
 

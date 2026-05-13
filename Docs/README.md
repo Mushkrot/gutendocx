@@ -26,6 +26,7 @@
 - GutenDocx has no built-in login and should not be exposed anonymously without a separate app-auth/security project.
 - Runtime remains `root` for legacy compatibility until the owner explicitly starts a migration/hardening project.
 - `Uploads/` and `output/` are operational data directories and may contain client files.
+- Batch Apply uses background jobs persisted under `output/jobs/`; inspect `/jobs/<job_id>` state when diagnosing long-running batch processing.
 - The primary Web UI upload control should remain a normal multi-file `.docx` picker for Windows compatibility. Use a separate clearly labeled control if folder upload is reintroduced.
 - `config.yaml` is operational/user-editable state and may be changed by the platform during normal use. Inspect diffs before committing, and do not revert it automatically.
 - Diagnostic audit events live in `output/audit_events.jsonl`; use them to reconstruct user actions/options/errors while treating them as sensitive operational metadata.
