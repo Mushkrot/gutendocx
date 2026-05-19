@@ -1,6 +1,6 @@
 # GutenDocx - Implementation Status
 
-**Last updated:** 2026-05-13
+**Last updated:** 2026-05-19
 **Project path:** `/ai/gutendocx`
 **Production URL:** `https://gutendocx.unicloud.ca`
 
@@ -89,6 +89,7 @@ These items are captured for future planning and should not be implemented witho
 
 ## Recent Changes
 
+- **2026-05-19:** Implemented the confirmed deterministic body-formatting rule for manual line breaks: non-heading body paragraphs containing a Word manual line break (`^l` / `@L@` notation) now get centered paragraph style `Para1`, while headings, TOC/protected styles, and ordinary body paragraphs are left in their existing style behavior. Added focused pytest coverage for the new rule; restarted production after confirming the service remained localhost-bound and verified local health plus the Cloudflare Access redirect.
 - **2026-05-13:** Saved official OpenAI prompt/model guide snapshots under `Docs/OpenAI_Guides/`, added `Docs/AI_Prompting_and_Usage_Analysis_2026-05-13.md`, and documented a cautious before/after QA rule for risky prompt/model/pipeline changes.
 - **2026-05-13:** Added background Apply jobs for batch processing with persisted job state, duplicate running-job reuse, `/jobs/apply`, `/jobs/{job_id}`, and Web UI polling to avoid Cloudflare `HTTP 524` as the normal batch path.
 - **2026-05-13:** Hardened background jobs with per-file progress/status, partial-success batch handling, and `Status`/`Error` columns in the XLSX batch report.

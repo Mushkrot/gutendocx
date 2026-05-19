@@ -1,6 +1,6 @@
 # GutenDocx Session Handoff
 
-Last updated: 2026-05-13 UTC
+Last updated: 2026-05-19 UTC
 
 ## Start Here
 
@@ -33,6 +33,34 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Diagnostic audit events are written to `output/audit_events.jsonl`. They should capture what the user clicked/tried, selected options, uploaded file metadata, endpoint timings, outputs, and errors without storing document contents.
 
 ## Recent Audit
+
+2026-05-19 confirmed `Para1` manual-line-break style rule:
+
+- Client requested and then confirmed a new body paragraph style rule:
+  - existing behavior: Headings are handled separately; other body paragraphs remain Body Text/Normal;
+  - requested behavior: among non-heading paragraphs, detect `^l` / `@L@` line breaks; paragraphs containing that marker/break should get style `Para1`; `Para1` text should be centered; all other non-heading paragraphs should stay `Normal` as now.
+- Analysis result:
+  - This is a deterministic DOCX body-formatting change, not an AI/prompt change.
+  - Relevant code is in `gutendocx/core/whole.py`:
+    - `_apply_body_style_overrides()` currently applies Body formatting to non-heading body paragraphs.
+    - `_apply_headings_style_overrides()` matches built-in Heading styles and learned `detected_style_mapping`.
+    - `apply_whole_document()` currently runs body overrides, heading overrides, special overrides, then page/section/footer work.
+  - Current runtime config may map headings as custom Word styles, for example `Headings: Heading 2`, `Heading2: Heading 3`, `Heading3: Para 08`, with `Body: Normal`. Treat `config.yaml` diffs as runtime state unless the task explicitly requires changing defaults.
+- Implemented in `gutendocx/core/whole.py`:
+  - `_paragraph_has_manual_line_break()` detects Word manual line breaks (`<w:br>` with no type or `textWrapping`), plus `"\n"`, literal `@L@`, and literal `^l` fallbacks.
+  - `_apply_para1_manual_line_break_style()` creates/updates paragraph style `Para1`, centers it, and applies it only to non-heading body paragraphs with manual line breaks.
+  - `apply_whole_document()` now runs this pass after body/headings overrides and includes the result in `whole.para1_manual_breaks`.
+  - `Para1` is whitelisted during optional unused-style cleanup.
+- Added focused tests in `gutendocx/tests/test_para1_manual_breaks.py` for body-with-break, body-without-break, built-in heading-with-break, and learned-heading-mapping-with-break behavior.
+- Added `pytest` to `requirements.txt` and installed it in the project venv.
+- Verification:
+  - `./gutenberg/bin/python -m py_compile gutendocx/core/whole.py gutendocx/tests/test_para1_manual_breaks.py`
+  - `./gutenberg/bin/python -m pytest gutendocx/tests/test_para1_manual_breaks.py -q` passed: 4 tests.
+- Production service was restarted and verified:
+  - `gutendocx.service` active;
+  - `127.0.0.1:8000` bind preserved;
+  - local `/health` OK;
+  - public URL still redirects to Cloudflare Access login.
 
 2026-05-13 background batch jobs:
 

@@ -8,6 +8,37 @@
 
 ## Current Session - Resume Point
 
+**2026-05-19:** Implemented the confirmed `Para1` paragraph style rule for manual line breaks.
+
+Current iteration:
+
+- Client confirmed the previously proposed logic:
+  - after Heading processing, check the remaining non-heading body paragraphs for manual line breaks (`^l` / `@L@` / Word line break);
+  - paragraphs containing such a break get style `Para1` with centered alignment;
+  - other non-heading paragraphs remain in the current normal/body style behavior.
+- Analysis found and implementation kept this as a deterministic DOCX body-formatting change, not an AI/prompt change:
+  - current whole-document body formatting lives in `gutendocx/core/whole.py`;
+  - `_apply_body_style_overrides()` applies Body formatting to non-heading body paragraphs;
+  - `_apply_headings_style_overrides()` protects/matches Heading roles using built-in Heading styles plus `detected_style_mapping`;
+  - current `config.yaml` maps learned headings such as `Headings: Heading 2`, `Heading2: Heading 3`, `Heading3: Para 08`, and `Body: Normal`.
+- Implemented in `gutendocx/core/whole.py`:
+  - detect manual Word line breaks as `<w:br>` without `w:type="page"`/`column`, with `"\n"`, literal `@L@`, and literal `^l` fallbacks;
+  - skip cover/protected styles, TOC styles, built-in Heading styles, and headings learned through `detected_style_mapping`;
+  - create/update paragraph style `Para1` based on `Normal`;
+  - set `Para1` and matching paragraphs to centered alignment;
+  - run the `Para1` pass after Body and Heading overrides so centering wins for the targeted paragraphs.
+- Added focused tests in `gutendocx/tests/test_para1_manual_breaks.py`, including learned heading mappings such as `Heading3: Para 08`.
+- Added `pytest` to `requirements.txt` and installed it in the project venv.
+- Verification:
+  - `./gutenberg/bin/python -m py_compile gutendocx/core/whole.py gutendocx/tests/test_para1_manual_breaks.py`
+  - `./gutenberg/bin/python -m pytest gutendocx/tests/test_para1_manual_breaks.py -q` passed: 4 tests.
+- Production service was restarted after the required pre-checks.
+- Post-restart verification:
+  - `gutendocx.service` active;
+  - `127.0.0.1:8000` bind preserved;
+  - local `/health` OK;
+  - public URL still redirects to Cloudflare Access login.
+
 **2026-05-13:** Fixed Windows upload picker compatibility.
 
 Current iteration:

@@ -441,6 +441,107 @@ def _apply_body_style_overrides(doc: Document, config: Dict[str, Any], body_star
     return {"applied": bool(changes), "changes": changes, "paragraphs_modified": paragraphs_modified}
 
 
+def _paragraph_has_manual_line_break(p) -> bool:
+    """Return True when a paragraph contains a manual line break, not a page/column break."""
+    try:
+        for br in p._element.xpath('.//w:br'):
+            br_type = br.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type')
+            if br_type in (None, "", "textWrapping"):
+                return True
+    except Exception:
+        pass
+
+    try:
+        text = p.text or ""
+    except Exception:
+        text = ""
+    return "\n" in text or "@L@" in text or "^l" in text
+
+
+def _apply_para1_manual_line_break_style(doc: Document, config: Dict[str, Any], body_start: int) -> Dict[str, Any]:
+    """Apply centered Para1 to non-heading body paragraphs with manual line breaks."""
+    protected_names = {
+        "Title",
+        "Subtitle",
+        "Author",
+        "Cover Title",
+        "Cover Subtitle",
+        "Cover Author",
+        "Header",
+        "Footer",
+    }
+    detected_mapping = (config or {}).get("detected_style_mapping", {}) or {}
+    detected_heading_names = {
+        str(v)
+        for k, v in detected_mapping.items()
+        if str(k) in ("Headings", "Heading1", "Heading2", "Heading3", "Heading4") and v
+    }
+
+    para1_name = "Para1"
+    try:
+        para1_style = doc.styles[para1_name]
+    except KeyError:
+        try:
+            para1_style = doc.styles.add_style(para1_name, WD_STYLE_TYPE.PARAGRAPH)
+            para1_style.base_style = doc.styles["Normal"]
+        except Exception:
+            para1_style = None
+    except Exception:
+        para1_style = None
+
+    if para1_style is None or getattr(para1_style, "type", None) != WD_STYLE_TYPE.PARAGRAPH:
+        return {"applied": False, "style": para1_name, "paragraphs_modified": 0, "reason": "style_unavailable"}
+
+    try:
+        para1_style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    except Exception:
+        pass
+
+    paragraphs_modified = 0
+    for idx, p in enumerate(doc.paragraphs):
+        if idx < body_start:
+            continue
+
+        style = getattr(p, "style", None)
+        name = _style_name(style)
+        if name:
+            lname = name.lower()
+            if (
+                name in protected_names
+                or name.startswith("Heading ")
+                or name.startswith("Heading")
+                or name in detected_heading_names
+                or lname.startswith("toc")
+            ):
+                continue
+
+        if not _paragraph_has_manual_line_break(p):
+            continue
+
+        modified = False
+        try:
+            if _style_name(getattr(p, "style", None)) != para1_name:
+                p.style = para1_style
+                modified = True
+        except Exception:
+            pass
+        try:
+            if p.paragraph_format.alignment != WD_ALIGN_PARAGRAPH.CENTER:
+                p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                modified = True
+        except Exception:
+            pass
+        if modified:
+            paragraphs_modified += 1
+
+    return {
+        "applied": paragraphs_modified > 0,
+        "style": para1_name,
+        "alignment": "center",
+        "paragraphs_modified": paragraphs_modified,
+    }
+
+
 def _apply_headings_style_overrides(doc: Document, config: Dict[str, Any], body_start: int) -> Dict[str, Any]:
     """Apply overrides to Heading paragraphs (chapter titles).
     
@@ -883,6 +984,7 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
 
     body_overrides = _apply_body_style_overrides(doc, config, body_start)
     headings_overrides = _apply_headings_style_overrides(doc, config, body_start)
+    para1_manual_breaks = _apply_para1_manual_line_break_style(doc, config, body_start)
     special_overrides = _apply_special_style_overrides(doc, config)
 
     # Ensure blank page (page 2) exists after cover
@@ -922,6 +1024,7 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
         name_whitelist = [
             "Normal",
             body_style_name,  # Add the body style (e.g. "GD Body")
+            "Para1",
             "Title",
             "Subtitle",
             "Author",
@@ -970,6 +1073,7 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
             "styles_cleanup": cleanup_stats,
             "body_overrides": body_overrides,
             "headings_overrides": headings_overrides,
+            "para1_manual_breaks": para1_manual_breaks,
             "special_overrides": special_overrides,
             "blank_page_fix": blank_page_result,
             "section_fix": section_fix_result,
