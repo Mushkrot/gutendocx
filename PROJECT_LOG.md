@@ -8,6 +8,25 @@
 
 ## Current Session - Resume Point
 
+**2026-05-26:** Made two low-risk observability cleanup improvements after reviewing recent logs.
+
+Current iteration:
+
+- Created baseline checkpoint commit `c20203e` before making changes because the working tree only had runtime `config.yaml` state.
+- Added a `/favicon.ico` 204 response to remove recurring browser 404 noise from audit logs.
+- Added frontend `auditErrorData()` so client-side error audit events keep a bounded `error` string and include structured `error_summary` fields such as HTTP status and Cloudflare title/code when available.
+- Did not change DOCX processing, Apply/job execution, AI model selection, cost calculation, retention cleanup, or production exposure.
+- Verification:
+  - `./gutenberg/bin/python -m py_compile gutendocx/web/server.py`
+  - extracted Web UI script syntax checked with `node --check -`
+- Production service was restarted after the required pre-checks.
+- Post-restart verification:
+  - `gutendocx.service`, `cloudflared`, `server-firewall`, `tailscaled`, and `ssh` active;
+  - `127.0.0.1:8000` bind preserved;
+  - local `/health` OK;
+  - local `/favicon.ico` returns 204;
+  - public URL still redirects to Cloudflare Access login.
+
 **2026-05-26:** Updated the confirmed `Para1` paragraph style rule for manual line breaks.
 
 Current iteration:

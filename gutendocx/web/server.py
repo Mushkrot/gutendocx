@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -2055,6 +2055,11 @@ def client_audit_event(req: ClientAuditEventRequest, request: Request) -> Dict[s
 @app.get("/health")
 def health() -> Dict[str, Any]:
     return {"status": "ok", "time": int(time.time())}
+
+
+@app.get("/favicon.ico")
+def favicon() -> Response:
+    return Response(status_code=204)
 
 
 @app.get("/config")

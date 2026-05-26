@@ -742,6 +742,27 @@
       };
     }
 
+    function auditErrorData(error, extra = {}) {
+      const text = String(error || '');
+      const summary = {
+        message: text.slice(0, 240)
+      };
+      const httpMatch = text.match(/HTTP\s+(\d{3})/i);
+      if (httpMatch) summary.http_status = Number(httpMatch[1]);
+      const titleMatch = text.match(/<title>([^<]+)<\/title>/i);
+      if (titleMatch) summary.title = titleMatch[1].trim().slice(0, 160);
+      const cfMatch = text.match(/\b(5\d\d):\s*([^<\n]+)/);
+      if (cfMatch) {
+        summary.cloudflare_code = Number(cfMatch[1]);
+        summary.cloudflare_reason = cfMatch[2].trim().slice(0, 160);
+      }
+      return {
+        ...extra,
+        error: text.slice(0, 1000),
+        error_summary: summary
+      };
+    }
+
     function auditClient(event, data = {}) {
       const body = JSON.stringify({
         event,
@@ -788,7 +809,7 @@
             return status;
           }
         } catch (e) {
-          auditClient('batch_status_poll_error', { batch_id: batchId, attempt, error: String(e) });
+          auditClient('batch_status_poll_error', auditErrorData(e, { batch_id: batchId, attempt }));
         }
         await new Promise(resolve => setTimeout(resolve, 5000));
       }
@@ -1148,7 +1169,7 @@
       } catch (e) {
         currentBatch = null;
         updateBatchInfo(null);
-        auditClient('upload_error', { error: String(e), selected_files: selectedFiles });
+        auditClient('upload_error', auditErrorData(e, { selected_files: selectedFiles }));
         showToast('error', String(e));
       } finally {
         setBusy(false);
@@ -1649,7 +1670,7 @@
         showToast('success', 'Analyze completed');
       } catch (e) {
         $("output").value = String(e);
-        auditClient('analyze_error', { endpoint: path, error: String(e) });
+        auditClient('analyze_error', auditErrorData(e, { endpoint: path }));
         showToast('error', String(e));
       } finally {
         setBusy(false);
@@ -1736,7 +1757,7 @@
         }
       } catch (e) {
         $("output").value = String(e);
-        auditClient('apply_error', { payload: auditPayloadSummary(payload), error: String(e) });
+        auditClient('apply_error', auditErrorData(e, { payload: auditPayloadSummary(payload) }));
         if (String(e).includes('HTTP 524') && payload.batch_id) {
           showToast('info', 'The request timed out, but the server may still be processing. Checking for the batch result…', 9000);
           const recovered = await pollBatchStatusAfterTimeout(payload.batch_id);
@@ -1808,7 +1829,7 @@
         }
       } catch (e) {
         $("output").value = String(e);
-        auditClient('toc_apply_error', { payload, error: String(e) });
+        auditClient('toc_apply_error', auditErrorData(e, { payload }));
         showToast('error', String(e));
       } finally {
         setBusy(false);
@@ -1861,7 +1882,7 @@
         auditClient('reset_defaults_completed', { ok: true, config_path: json && json.config_path });
       } catch (e) {
         $("output").value = String(e);
-        auditClient('reset_defaults_error', { error: String(e) });
+        auditClient('reset_defaults_error', auditErrorData(e));
         showToast('error', String(e));
       } finally {
         setBusy(false);
@@ -1948,7 +1969,7 @@
         }
       } catch (e) {
         $("output").value = String(e);
-        auditClient('learn_cover_error', { input: inputPath, error: String(e) });
+        auditClient('learn_cover_error', auditErrorData(e, { input: inputPath }));
         showToast('error', String(e));
       } finally {
         setBusy(false);
@@ -2062,7 +2083,7 @@
         }
       } catch (e) {
         $("output").value = String(e);
-        auditClient('learn_body_error', { input: inputPath, error: String(e) });
+        auditClient('learn_body_error', auditErrorData(e, { input: inputPath }));
         showToast('error', String(e));
       } finally {
         setBusy(false);

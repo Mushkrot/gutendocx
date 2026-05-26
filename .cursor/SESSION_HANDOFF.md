@@ -34,6 +34,15 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 
 ## Recent Audit
 
+2026-05-26 low-risk logging cleanup:
+
+- Created baseline checkpoint commit `c20203e` before changes; `config.yaml` remained runtime/user-editable state and was not staged.
+- Added `/favicon.ico` returning HTTP 204 to remove recurring browser 404 noise from audit logs.
+- Added Web UI `auditErrorData()` helper so client error events keep bounded `error` text plus structured `error_summary` fields for HTTP status and Cloudflare HTML title/code when present.
+- No DOCX pipeline, Apply/job execution, AI cost calculation, model governance, retention cleanup, Cloudflare Access, or bind behavior was changed.
+- Verification passed: `./gutenberg/bin/python -m py_compile gutendocx/web/server.py`; extracted Web UI script passed `node --check -`.
+- Production was restarted and verified: services active, port `8000` still localhost-bound, local `/health` OK, `/favicon.ico` returns 204, public URL still redirects to Cloudflare Access.
+
 2026-05-26 updated `Para1` manual-line-break alignment:
 
 - Client reported the workflow is working well and requested `Para1=>left`.
