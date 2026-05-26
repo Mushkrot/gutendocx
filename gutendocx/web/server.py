@@ -1824,6 +1824,351 @@ def _storage_summary() -> Dict[str, Any]:
     }
 
 
+def _as_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _ms_to_ts(value: Any) -> Optional[int]:
+    raw = _as_int(value, 0)
+    if raw <= 0:
+        return None
+    if raw > 10_000_000_000:
+        return int(raw / 1000)
+    return raw
+
+
+def _jsonl_health(path: str) -> Dict[str, Any]:
+    lines = 0
+    valid = 0
+    invalid = 0
+    first_ts: Optional[int] = None
+    last_ts: Optional[int] = None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                lines += 1
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    invalid += 1
+                    continue
+                if not isinstance(obj, dict):
+                    invalid += 1
+                    continue
+                valid += 1
+                ts = _ms_to_ts(obj.get("ts_ms")) or _ms_to_ts(obj.get("ts"))
+                if ts:
+                    first_ts = ts if first_ts is None else min(first_ts, ts)
+                    last_ts = ts if last_ts is None else max(last_ts, ts)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        invalid += 1
+    return {
+        "file": os.path.basename(path),
+        "lines": lines,
+        "valid": valid,
+        "invalid": invalid,
+        "first_ts": first_ts,
+        "last_ts": last_ts,
+    }
+
+
+def _iter_job_records() -> Dict[str, Any]:
+    jobs: List[Dict[str, Any]] = []
+    invalid = 0
+    try:
+        names = sorted(os.listdir(JOBS_DIR))
+    except Exception:
+        names = []
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        job = _load_job_file(os.path.join(JOBS_DIR, name))
+        if isinstance(job, dict):
+            jobs.append(job)
+        else:
+            invalid += 1
+    return {"jobs": jobs, "invalid": invalid}
+
+
+def _job_batch_id(job: Dict[str, Any]) -> Optional[str]:
+    summary = job.get("request_summary") if isinstance(job.get("request_summary"), dict) else {}
+    payload = job.get("request_payload") if isinstance(job.get("request_payload"), dict) else {}
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    batch = summary.get("batch_id") or payload.get("batch_id") or job.get("batch_id")
+    if not batch and isinstance(result.get("batch"), dict):
+        batch = result["batch"].get("id")
+    return str(batch) if batch else None
+
+
+def _job_options(job: Dict[str, Any]) -> Dict[str, Any]:
+    summary = job.get("request_summary") if isinstance(job.get("request_summary"), dict) else {}
+    payload = job.get("request_payload") if isinstance(job.get("request_payload"), dict) else {}
+    options = summary.get("options") if isinstance(summary.get("options"), dict) else {}
+    out = dict(options)
+    for key in ("vision", "no_layout", "update_toc", "toc_mode", "apply_body", "apply_cover"):
+        if key not in out and key in payload:
+            out[key] = payload.get(key)
+    return out
+
+
+def _job_file_counts(job: Dict[str, Any]) -> Dict[str, int]:
+    files = job.get("files")
+    counts = {
+        "total": 0,
+        "completed": 0,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 0,
+        "queued": 0,
+        "skipped": 0,
+    }
+    if isinstance(files, list):
+        counts["total"] = len(files)
+        for item in files:
+            status = str(item.get("status") or "queued") if isinstance(item, dict) else "queued"
+            if status in counts:
+                counts[status] += 1
+        return counts
+    summary = job.get("request_summary") if isinstance(job.get("request_summary"), dict) else {}
+    payload = job.get("request_payload") if isinstance(job.get("request_payload"), dict) else {}
+    batch_files = payload.get("batch_files") if isinstance(payload.get("batch_files"), list) else []
+    counts["total"] = _as_int(summary.get("batch_count"), len(batch_files))
+    status = str(job.get("status") or "")
+    if status == "completed":
+        counts["completed"] = counts["total"]
+    elif status == "failed":
+        counts["failed"] = counts["total"]
+    elif status == "cancelled":
+        counts["cancelled"] = counts["total"]
+    return counts
+
+
+def _job_ts(job: Dict[str, Any]) -> Optional[int]:
+    return (
+        _ms_to_ts(job.get("created_at"))
+        or _ms_to_ts(job.get("started_at"))
+        or _ms_to_ts(job.get("updated_at"))
+        or _ms_to_ts(job.get("finished_at"))
+    )
+
+
+def _job_duration_ms(job: Dict[str, Any]) -> Optional[int]:
+    start = _as_int(job.get("started_at") or job.get("created_at"), 0)
+    finish = _as_int(job.get("finished_at") or job.get("updated_at"), 0)
+    if start > 0 and finish >= start:
+        return finish - start
+    return None
+
+
+def _event_is_error(row: Dict[str, Any]) -> bool:
+    event = str(row.get("event") or "")
+    if event.endswith((".error", ".failed")) or ".error" in event:
+        return True
+    status_code = _as_int(row.get("status_code") or row.get("http_status"), 0)
+    if status_code >= 500:
+        return True
+    data = row.get("data") if isinstance(row.get("data"), dict) else {}
+    data_status = _as_int(data.get("status") or data.get("http_status"), 0)
+    if data_status >= 500:
+        return True
+    return bool(row.get("error") or row.get("error_type") or data.get("error") or data.get("error_summary"))
+
+
+def _event_error_summary(row: Dict[str, Any]) -> Optional[str]:
+    for source in (row, row.get("data") if isinstance(row.get("data"), dict) else {}):
+        summary = source.get("error_summary") if isinstance(source, dict) else None
+        if isinstance(summary, dict):
+            for key in ("message", "title", "code", "reason"):
+                if summary.get(key):
+                    return _bounded_str(summary.get(key), 240)
+        if isinstance(source, dict):
+            for key in ("error", "detail", "message"):
+                if source.get(key):
+                    return _bounded_str(source.get(key), 240)
+    return None
+
+
+def _activity_summary(days: int = 30, recent_limit: int = 50, error_limit: int = 50) -> Dict[str, Any]:
+    now = int(time.time())
+    days = max(1, int(days or 30))
+    cutoff = now - days * 24 * 60 * 60
+    audit_rows = [r for r in _iter_jsonl(AUDIT_EVENTS_JSONL) if (_ms_to_ts(r.get("ts_ms")) or _ms_to_ts(r.get("ts")) or 0) >= cutoff]
+    cost_rows = [r for r in _iter_jsonl(AI_COSTS_JSONL) if _as_int(r.get("ts"), 0) >= cutoff]
+
+    job_actor: Dict[str, str] = {}
+    for row in audit_rows:
+        job_id = row.get("job_id")
+        email = row.get("cf_access_user") or row.get("actor_email")
+        if job_id and email and str(job_id) not in job_actor:
+            job_actor[str(job_id)] = str(email)
+
+    cost_by_job: Dict[str, float] = {}
+    cost_by_batch: Dict[str, float] = {}
+    ai_input_paths = set()
+    for row in cost_rows:
+        cost = _as_float(row.get("cost_usd"), 0.0)
+        job_id = row.get("job_id")
+        batch_id = row.get("batch_id")
+        input_path = row.get("input_path")
+        if job_id:
+            cost_by_job[str(job_id)] = cost_by_job.get(str(job_id), 0.0) + cost
+        if batch_id:
+            cost_by_batch[str(batch_id)] = cost_by_batch.get(str(batch_id), 0.0) + cost
+        if input_path:
+            ai_input_paths.add(str(input_path))
+
+    job_records = _iter_job_records()
+    recent_jobs: List[Dict[str, Any]] = []
+    totals = {
+        "jobs": 0,
+        "files_total": 0,
+        "files_completed": 0,
+        "files_failed": 0,
+        "files_cancelled": 0,
+        "files_running": 0,
+        "files_queued": 0,
+        "ai_calls": len(cost_rows),
+        "ai_cost_usd": sum(_as_float(r.get("cost_usd"), 0.0) for r in cost_rows),
+        "files_with_ai_cost_events": len(ai_input_paths),
+        "files_completed_without_ai_cost_events": 0,
+    }
+    by_status: Dict[str, int] = {}
+    option_counts = {
+        "apply_body": 0,
+        "apply_cover": 0,
+        "update_toc": 0,
+        "vision": 0,
+    }
+    by_toc_mode: Dict[str, int] = {}
+
+    for job in job_records["jobs"]:
+        ts = _job_ts(job)
+        if not ts or ts < cutoff:
+            continue
+        job_id = str(job.get("id") or "")
+        batch_id = _job_batch_id(job)
+        options = _job_options(job)
+        counts = _job_file_counts(job)
+        status = str(job.get("status") or "unknown")
+        by_status[status] = by_status.get(status, 0) + 1
+        totals["jobs"] += 1
+        totals["files_total"] += counts["total"]
+        totals["files_completed"] += counts["completed"]
+        totals["files_failed"] += counts["failed"]
+        totals["files_cancelled"] += counts["cancelled"]
+        totals["files_running"] += counts["running"]
+        totals["files_queued"] += counts["queued"]
+        for key in option_counts:
+            if bool(options.get(key)):
+                option_counts[key] += 1
+        toc_mode = options.get("toc_mode")
+        if toc_mode:
+            k = str(toc_mode)
+            by_toc_mode[k] = by_toc_mode.get(k, 0) + 1
+        cost_usd = _as_float(((job.get("ai_cost") or {}) if isinstance(job.get("ai_cost"), dict) else {}).get("total_usd"), 0.0)
+        if not cost_usd and job_id:
+            cost_usd = cost_by_job.get(job_id, 0.0)
+        if not cost_usd and batch_id:
+            cost_usd = cost_by_batch.get(batch_id, 0.0)
+        recent_jobs.append(
+            {
+                "id": job_id,
+                "ts": ts,
+                "batch_id": batch_id,
+                "actor_email": job_actor.get(job_id),
+                "status": status,
+                "type": job.get("type"),
+                "duration_ms": _job_duration_ms(job),
+                "files": counts,
+                "options": options,
+                "ai_cost_usd": cost_usd,
+                "download": job.get("download"),
+                "error_type": job.get("error_type"),
+                "error": _bounded_str(job.get("error"), 240),
+            }
+        )
+
+    totals["files_completed_without_ai_cost_events"] = max(
+        0,
+        int(totals["files_completed"]) - int(totals["files_with_ai_cost_events"]),
+    )
+
+    recent_errors: List[Dict[str, Any]] = []
+    for row in audit_rows:
+        if not _event_is_error(row):
+            continue
+        data = row.get("data") if isinstance(row.get("data"), dict) else {}
+        recent_errors.append(
+            {
+                "ts": _ms_to_ts(row.get("ts_ms")) or _ms_to_ts(row.get("ts")),
+                "event": row.get("event"),
+                "actor_email": row.get("cf_access_user") or row.get("actor_email"),
+                "path": row.get("path"),
+                "job_id": row.get("job_id") or data.get("job_id"),
+                "batch_id": row.get("batch_id") or data.get("batch_id"),
+                "file": (
+                    ((row.get("input") or {}).get("name") if isinstance(row.get("input"), dict) else None)
+                    or ((data.get("input") or {}).get("name") if isinstance(data.get("input"), dict) else None)
+                    or data.get("file_name")
+                ),
+                "status_code": row.get("status_code") or data.get("status") or data.get("http_status"),
+                "error_type": row.get("error_type") or data.get("error_type"),
+                "summary": _event_error_summary(row),
+            }
+        )
+
+    terminal = {"completed", "failed", "cancelled", "interrupted"}
+    audit_health = {
+        "audit_events": _jsonl_health(AUDIT_EVENTS_JSONL),
+        "ai_costs": _jsonl_health(AI_COSTS_JSONL),
+        "jobs": {
+            "files": len(job_records["jobs"]),
+            "invalid_files": int(job_records["invalid"]),
+            "missing_final_status": len(
+                [
+                    j
+                    for j in job_records["jobs"]
+                    if str(j.get("status") or "") not in terminal and not str(j.get("status") or "").startswith(("queued", "running"))
+                ]
+            ),
+        },
+        "cost_events_missing_context": len(
+            [
+                r
+                for r in cost_rows
+                if not (r.get("job_id") or r.get("batch_id") or r.get("input_path"))
+            ]
+        ),
+    }
+
+    return {
+        "ok": True,
+        "days": days,
+        "cutoff_ts": cutoff,
+        "totals": totals,
+        "by_status": by_status,
+        "option_counts": option_counts,
+        "by_toc_mode": by_toc_mode,
+        "recent_jobs": sorted(recent_jobs, key=lambda r: int(r.get("ts") or 0), reverse=True)[: max(1, int(recent_limit or 50))],
+        "recent_errors": sorted(recent_errors, key=lambda r: int(r.get("ts") or 0), reverse=True)[: max(1, int(error_limit or 50))],
+        "audit_health": audit_health,
+    }
+
+
 @app.get("/admin/api/summary")
 def admin_summary(request: Request, days: int = 30) -> Dict[str, Any]:
     email = _require_admin(request)
@@ -1833,6 +2178,7 @@ def admin_summary(request: Request, days: int = 30) -> Dict[str, Any]:
         "model": _configured_ai_model(),
         "model_options": _model_options(),
         "costs": _cost_summary(days=days),
+        "activity": _activity_summary(days=days),
         "storage": _storage_summary(),
     }
     _audit_event("admin.summary.viewed", request, days=days)
