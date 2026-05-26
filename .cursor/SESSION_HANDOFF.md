@@ -34,11 +34,20 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 
 ## Recent Audit
 
+2026-05-26 updated `Para1` manual-line-break alignment:
+
+- Client reported the workflow is working well and requested `Para1=>left`.
+- `gutendocx/core/whole.py` now keeps the same deterministic `Para1` rule for non-heading body paragraphs with manual line breaks, but sets both the `Para1` style and matching paragraphs to left alignment.
+- `gutendocx/tests/test_para1_manual_breaks.py` now expects left alignment for the targeted paragraph/style and still covers ordinary body paragraphs, built-in headings, and learned heading mappings.
+- `config.yaml` remains runtime/user-editable state and was not intentionally changed.
+- Verification passed: py_compile for the changed Python files, `./gutenberg/bin/python -m pytest gutendocx/tests/test_para1_manual_breaks.py -q` with 4 tests.
+- Production was restarted and verified: services active, port `8000` still localhost-bound, local `/health` OK, public URL still redirects to Cloudflare Access.
+
 2026-05-19 confirmed `Para1` manual-line-break style rule:
 
 - Client requested and then confirmed a new body paragraph style rule:
   - existing behavior: Headings are handled separately; other body paragraphs remain Body Text/Normal;
-  - requested behavior: among non-heading paragraphs, detect `^l` / `@L@` line breaks; paragraphs containing that marker/break should get style `Para1`; `Para1` text should be centered; all other non-heading paragraphs should stay `Normal` as now.
+  - requested behavior: among non-heading paragraphs, detect `^l` / `@L@` line breaks; paragraphs containing that marker/break should get style `Para1`; `Para1` text should be centered; all other non-heading paragraphs should stay `Normal` as now. Superseded on 2026-05-26 by client request `Para1=>left`.
 - Analysis result:
   - This is a deterministic DOCX body-formatting change, not an AI/prompt change.
   - Relevant code is in `gutendocx/core/whole.py`:
@@ -48,7 +57,7 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
   - Current runtime config may map headings as custom Word styles, for example `Headings: Heading 2`, `Heading2: Heading 3`, `Heading3: Para 08`, with `Body: Normal`. Treat `config.yaml` diffs as runtime state unless the task explicitly requires changing defaults.
 - Implemented in `gutendocx/core/whole.py`:
   - `_paragraph_has_manual_line_break()` detects Word manual line breaks (`<w:br>` with no type or `textWrapping`), plus `"\n"`, literal `@L@`, and literal `^l` fallbacks.
-  - `_apply_para1_manual_line_break_style()` creates/updates paragraph style `Para1`, centers it, and applies it only to non-heading body paragraphs with manual line breaks.
+  - `_apply_para1_manual_line_break_style()` creates/updates paragraph style `Para1`, centers it, and applies it only to non-heading body paragraphs with manual line breaks. Superseded on 2026-05-26: the rule now left-aligns `Para1`.
   - `apply_whole_document()` now runs this pass after body/headings overrides and includes the result in `whole.para1_manual_breaks`.
   - `Para1` is whitelisted during optional unused-style cleanup.
 - Added focused tests in `gutendocx/tests/test_para1_manual_breaks.py` for body-with-break, body-without-break, built-in heading-with-break, and learned-heading-mapping-with-break behavior.

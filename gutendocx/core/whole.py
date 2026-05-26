@@ -459,7 +459,7 @@ def _paragraph_has_manual_line_break(p) -> bool:
 
 
 def _apply_para1_manual_line_break_style(doc: Document, config: Dict[str, Any], body_start: int) -> Dict[str, Any]:
-    """Apply centered Para1 to non-heading body paragraphs with manual line breaks."""
+    """Apply left-aligned Para1 to non-heading body paragraphs with manual line breaks."""
     protected_names = {
         "Title",
         "Subtitle",
@@ -493,7 +493,7 @@ def _apply_para1_manual_line_break_style(doc: Document, config: Dict[str, Any], 
         return {"applied": False, "style": para1_name, "paragraphs_modified": 0, "reason": "style_unavailable"}
 
     try:
-        para1_style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        para1_style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
     except Exception:
         pass
 
@@ -526,8 +526,8 @@ def _apply_para1_manual_line_break_style(doc: Document, config: Dict[str, Any], 
         except Exception:
             pass
         try:
-            if p.paragraph_format.alignment != WD_ALIGN_PARAGRAPH.CENTER:
-                p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            if p.paragraph_format.alignment != WD_ALIGN_PARAGRAPH.LEFT:
+                p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 modified = True
         except Exception:
             pass

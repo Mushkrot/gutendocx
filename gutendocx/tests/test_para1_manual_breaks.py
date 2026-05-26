@@ -5,7 +5,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from gutendocx.core.whole import _apply_para1_manual_line_break_style
 
 
-def test_manual_line_break_body_paragraph_gets_centered_para1():
+def test_manual_line_break_body_paragraph_gets_left_aligned_para1():
     doc = Document()
     p = doc.add_paragraph()
     p.add_run("First line")
@@ -17,8 +17,8 @@ def test_manual_line_break_body_paragraph_gets_centered_para1():
     assert result["applied"] is True
     assert result["paragraphs_modified"] == 1
     assert p.style.name == "Para1"
-    assert p.paragraph_format.alignment == WD_ALIGN_PARAGRAPH.CENTER
-    assert doc.styles["Para1"].paragraph_format.alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert p.paragraph_format.alignment == WD_ALIGN_PARAGRAPH.LEFT
+    assert doc.styles["Para1"].paragraph_format.alignment == WD_ALIGN_PARAGRAPH.LEFT
 
 
 def test_body_paragraph_without_manual_line_break_stays_normal():

@@ -8,13 +8,31 @@
 
 ## Current Session - Resume Point
 
+**2026-05-26:** Updated the confirmed `Para1` paragraph style rule for manual line breaks.
+
+Current iteration:
+
+- Client reported the workflow is working well and requested `Para1=>left`.
+- Updated `gutendocx/core/whole.py` so non-heading body paragraphs with manual line breaks still get style `Para1`, but both the `Para1` style and matching paragraphs are now left-aligned.
+- Updated focused pytest coverage in `gutendocx/tests/test_para1_manual_breaks.py` to expect left alignment while preserving the existing heading and learned-heading exclusions.
+- Left `config.yaml` untouched as runtime/user-editable state.
+- Verification:
+  - `./gutenberg/bin/python -m py_compile gutendocx/core/whole.py gutendocx/tests/test_para1_manual_breaks.py`
+  - `./gutenberg/bin/python -m pytest gutendocx/tests/test_para1_manual_breaks.py -q` passed: 4 tests.
+- Production service was restarted after the required pre-checks.
+- Post-restart verification:
+  - `gutendocx.service`, `cloudflared`, `server-firewall`, `tailscaled`, and `ssh` active;
+  - `127.0.0.1:8000` bind preserved;
+  - local `/health` OK;
+  - public URL still redirects to Cloudflare Access login.
+
 **2026-05-19:** Implemented the confirmed `Para1` paragraph style rule for manual line breaks.
 
 Current iteration:
 
 - Client confirmed the previously proposed logic:
   - after Heading processing, check the remaining non-heading body paragraphs for manual line breaks (`^l` / `@L@` / Word line break);
-  - paragraphs containing such a break get style `Para1` with centered alignment;
+  - paragraphs containing such a break get style `Para1` with centered alignment; superseded on 2026-05-26 by client request `Para1=>left`;
   - other non-heading paragraphs remain in the current normal/body style behavior.
 - Analysis found and implementation kept this as a deterministic DOCX body-formatting change, not an AI/prompt change:
   - current whole-document body formatting lives in `gutendocx/core/whole.py`;
