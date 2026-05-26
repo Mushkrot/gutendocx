@@ -120,6 +120,53 @@
       <div class="metric"><div class="label">Tokens</div><div id="metricTokens" class="value">0</div></div>
       <div class="metric"><div class="label">Stored files</div><div id="metricFiles" class="value">0</div></div>
     </div>
+    <div class="grid">
+      <div class="metric"><div class="label">Completed files</div><div id="metricCompletedFiles" class="value">0</div></div>
+      <div class="metric"><div class="label">Jobs</div><div id="metricJobs" class="value">0</div></div>
+      <div class="metric"><div class="label">Failed / cancelled files</div><div id="metricProblemFiles" class="value">0</div></div>
+      <div class="metric"><div class="label">Completed without AI cost</div><div id="metricNoAiFiles" class="value">0</div></div>
+    </div>
+
+    <div class="two" style="margin-bottom:18px;">
+      <section class="panel">
+        <h2>Recent Jobs</h2>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>User</th>
+                <th>Job / Batch</th>
+                <th class="num">Files</th>
+                <th>Options</th>
+                <th>Status</th>
+                <th class="num">Duration</th>
+                <th class="num">AI cost</th>
+              </tr>
+            </thead>
+            <tbody id="jobRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Recent Errors</h2>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Job / File</th>
+                <th>Status</th>
+                <th>Summary</th>
+              </tr>
+            </thead>
+            <tbody id="errorRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
 
     <div class="two">
       <section class="panel">
@@ -182,6 +229,16 @@
         </table>
       </div>
     </section>
+
+    <section class="panel" style="margin-top:18px;">
+      <h2>Audit Health</h2>
+      <div class="scroll" style="max-height:320px;">
+        <table>
+          <thead><tr><th>Area</th><th class="num">Lines / files</th><th class="num">Valid</th><th class="num">Invalid</th><th>Time range / note</th></tr></thead>
+          <tbody id="auditHealthRows"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <script>
@@ -197,6 +254,30 @@
     };
     const timeFmt = (ts) => ts ? new Date(Number(ts) * 1000).toLocaleString() : "";
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const durationFmt = (ms) => {
+      ms = Number(ms || 0);
+      if (!ms) return "";
+      const sec = Math.round(ms / 1000);
+      if (sec < 60) return `${sec}s`;
+      const min = Math.floor(sec / 60);
+      const rem = sec % 60;
+      if (min < 60) return `${min}m ${rem}s`;
+      const hr = Math.floor(min / 60);
+      return `${hr}h ${min % 60}m`;
+    };
+    const shortId = (s) => {
+      s = String(s || "");
+      return s.length > 20 ? `${s.slice(0, 12)}...${s.slice(-6)}` : s;
+    };
+    const optionTags = (opts) => {
+      opts = opts || {};
+      const tags = [];
+      if (opts.apply_body) tags.push("Body");
+      if (opts.apply_cover) tags.push("Cover");
+      if (opts.update_toc) tags.push(`TOC${opts.toc_mode ? `:${opts.toc_mode}` : ""}`);
+      if (opts.vision) tags.push("Vision");
+      return tags.join(", ") || "None";
+    };
 
     async function api(path, options = {}) {
       const res = await fetch(path, {
@@ -221,6 +302,12 @@
       $("uploadsFiles").textContent = `${intFmt(uploads.files)} files`;
       $("outputSize").textContent = sizeFmt(output.bytes);
       $("outputFiles").textContent = `${intFmt(output.files)} files`;
+      const activity = data.activity || {};
+      const activityTotals = activity.totals || {};
+      $("metricCompletedFiles").textContent = intFmt(activityTotals.files_completed);
+      $("metricJobs").textContent = intFmt(activityTotals.jobs);
+      $("metricProblemFiles").textContent = intFmt((activityTotals.files_failed || 0) + (activityTotals.files_cancelled || 0));
+      $("metricNoAiFiles").textContent = intFmt(activityTotals.files_completed_without_ai_cost_events);
 
       const currentModel = data.model || "";
       const options = data.model_options || [];
@@ -242,6 +329,32 @@
         </tr>
       `).join("") || `<tr><td colspan="6" class="muted">No AI cost events for this period.</td></tr>`;
 
+      $("jobRows").innerHTML = (activity.recent_jobs || []).map((r) => {
+        const files = r.files || {};
+        return `
+          <tr>
+            <td>${esc(timeFmt(r.ts))}</td>
+            <td>${esc(r.actor_email || "")}</td>
+            <td><div class="mono">${esc(shortId(r.id))}</div><div class="muted mono">${esc(shortId(r.batch_id || ""))}</div></td>
+            <td class="num"><div>${intFmt(files.completed || 0)} / ${intFmt(files.total || 0)}</div><div class="muted">${intFmt(files.failed || 0)} failed</div></td>
+            <td>${esc(optionTags(r.options))}</td>
+            <td>${esc(r.status || "")}${r.error ? `<div class="warning">${esc(r.error)}</div>` : ""}</td>
+            <td class="num">${esc(durationFmt(r.duration_ms))}</td>
+            <td class="num">${money(r.ai_cost_usd)}</td>
+          </tr>
+        `;
+      }).join("") || `<tr><td colspan="8" class="muted">No jobs for this period.</td></tr>`;
+
+      $("errorRows").innerHTML = (activity.recent_errors || []).map((r) => `
+        <tr>
+          <td>${esc(timeFmt(r.ts))}</td>
+          <td>${esc(r.event || "")}<div class="muted">${esc(r.actor_email || "")}</div></td>
+          <td><div class="mono">${esc(shortId(r.job_id || r.batch_id || ""))}</div><div class="muted mono">${esc(r.file || r.path || "")}</div></td>
+          <td>${esc(r.status_code || r.error_type || "")}</td>
+          <td>${esc(r.summary || "")}</td>
+        </tr>
+      `).join("") || `<tr><td colspan="5" class="muted">No recent errors for this period.</td></tr>`;
+
       const modelRows = Object.entries(data.costs.by_model || {}).sort((a, b) => (b[1].cost_usd || 0) - (a[1].cost_usd || 0));
       $("modelRows").innerHTML = modelRows.map(([model, r]) => `
         <tr>
@@ -252,6 +365,18 @@
           <td class="num">${money(r.cost_usd)}</td>
         </tr>
       `).join("") || `<tr><td colspan="5" class="muted">No model usage.</td></tr>`;
+
+      const health = activity.audit_health || {};
+      const audit = health.audit_events || {};
+      const aiCosts = health.ai_costs || {};
+      const jobs = health.jobs || {};
+      const range = (r) => r.first_ts || r.last_ts ? `${timeFmt(r.first_ts)} - ${timeFmt(r.last_ts)}` : "";
+      $("auditHealthRows").innerHTML = [
+        `<tr><td>audit_events.jsonl</td><td class="num">${intFmt(audit.lines)}</td><td class="num">${intFmt(audit.valid)}</td><td class="num">${intFmt(audit.invalid)}</td><td>${esc(range(audit))}</td></tr>`,
+        `<tr><td>ai_costs.jsonl</td><td class="num">${intFmt(aiCosts.lines)}</td><td class="num">${intFmt(aiCosts.valid)}</td><td class="num">${intFmt(aiCosts.invalid)}</td><td>${esc(range(aiCosts))}</td></tr>`,
+        `<tr><td>jobs</td><td class="num">${intFmt(jobs.files)}</td><td class="num">${intFmt((jobs.files || 0) - (jobs.invalid_files || 0))}</td><td class="num">${intFmt(jobs.invalid_files)}</td><td>${intFmt(jobs.missing_final_status)} jobs with unexpected status</td></tr>`,
+        `<tr><td>AI cost context</td><td class="num">${intFmt(health.cost_events_missing_context)}</td><td class="num"></td><td class="num"></td><td>cost events missing job, batch, and input references</td></tr>`,
+      ].join("");
     }
 
     function renderCleanup(data) {
