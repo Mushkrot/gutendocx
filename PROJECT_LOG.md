@@ -8,6 +8,34 @@
 
 ## Current Session - Resume Point
 
+**2026-05-26:** Improved logging analytics and admin observability without changing file processing.
+
+Current iteration:
+
+- Implemented read-only backend activity summaries over existing `output/jobs/*.json`, `output/audit_events.jsonl`, and `output/ai_costs.jsonl`.
+- Extended `/admin/api/summary` with `activity` data: job/file totals, recent jobs, recent errors, option breakdowns, AI-cost context, and audit health.
+- Updated `/admin` to show completed files, jobs, failed/cancelled files, files completed without AI-cost events, Recent Jobs, Recent Errors, and Audit Health while keeping the existing AI-cost/storage/model controls.
+- Normalized new audit events with `schema_version`, `source`, `operation`, and `actor_email` when available.
+- Added cost-context fields for new AI cost rows and best-effort cost logging for cover analyze/apply, debug vision, and learn cover/body endpoints when those endpoints already perform AI work.
+- Added tests for activity summaries, audit event schema metadata, and AI cost context.
+- Explicitly did not change DOCX/PDF processing, LibreOffice behavior, AI prompts, model governance, cleanup behavior, or the conditions that decide whether AI is called.
+- Commits:
+  - `6b42439 Add admin activity summary backend`
+  - `cc36bef Show activity health in admin panel`
+  - `9fa0c3e Normalize audit and AI cost logging`
+- Verification:
+  - `./gutenberg/bin/python -m py_compile gutendocx/web/server.py gutendocx/tests/test_admin_activity_summary.py`
+  - `./gutenberg/bin/python -m pytest gutendocx/tests -q` passed: 7 tests.
+  - extracted admin script syntax checked with `node --check -`.
+  - TestClient `/admin/api/summary?days=30` returned `activity` with `recent_jobs` and `audit_health`.
+- Production service was restarted after the required pre-checks.
+- Post-restart verification:
+  - `gutendocx.service`, `cloudflared`, `server-firewall`, `tailscaled`, and `ssh` active;
+  - `127.0.0.1:8000` bind preserved;
+  - local `/health` OK;
+  - local `/admin/api/summary?days=30` with admin header returned the new `activity` object;
+  - public URL still redirects to Cloudflare Access login.
+
 **2026-05-26:** Made two low-risk observability cleanup improvements after reviewing recent logs.
 
 Current iteration:

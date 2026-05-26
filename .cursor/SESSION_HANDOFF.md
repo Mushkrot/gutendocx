@@ -1,6 +1,6 @@
 # GutenDocx Session Handoff
 
-Last updated: 2026-05-19 UTC
+Last updated: 2026-05-26 UTC
 
 ## Start Here
 
@@ -33,6 +33,18 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Diagnostic audit events are written to `output/audit_events.jsonl`. They should capture what the user clicked/tried, selected options, uploaded file metadata, endpoint timings, outputs, and errors without storing document contents.
 
 ## Recent Audit
+
+2026-05-26 logging analytics/admin observability:
+
+- Added read-only backend activity summary helpers over existing `output/jobs/*.json`, `output/audit_events.jsonl`, and `output/ai_costs.jsonl`.
+- `/admin/api/summary` now includes `activity`: totals for jobs/files/errors, recent jobs, recent errors, option breakdowns, AI cost context, and audit health.
+- `/admin` now shows activity cards, Recent Jobs, Recent Errors, and Audit Health alongside existing AI cost, model, and storage cleanup controls.
+- New audit events include `schema_version`, `source`, `operation`, and `actor_email` when available.
+- New AI cost events include better context such as operation/status/job/batch/input where available.
+- Added best-effort audit/cost logging around cover analyze/apply, debug vision, and learn cover/body endpoints. These additions only record metadata after existing actions; they do not change DOCX/PDF processing, LibreOffice, AI prompts, model selection, cleanup, or the conditions that decide whether AI runs.
+- Commits: `6b42439`, `cc36bef`, `9fa0c3e`.
+- Verification passed: py_compile, full `./gutenberg/bin/python -m pytest gutendocx/tests -q` with 7 tests, admin JS `node --check`, TestClient admin summary, production restart QA.
+- Production restart QA: infrastructure services active, port `8000` still localhost-bound, local `/health` OK, local admin summary returns `activity`, and public URL still redirects to Cloudflare Access.
 
 2026-05-26 low-risk logging cleanup:
 
