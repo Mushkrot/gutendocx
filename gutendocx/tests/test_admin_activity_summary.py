@@ -108,3 +108,42 @@ def test_activity_summary_counts_jobs_files_costs_and_errors(tmp_path, monkeypat
     assert summary["recent_jobs"][0]["duration_ms"] == 45_000
     assert summary["recent_errors"][0]["summary"] == "sample failure"
     assert summary["audit_health"]["audit_events"]["invalid"] == 1
+
+
+def test_audit_event_adds_schema_source_and_operation(tmp_path, monkeypatch):
+    audit_path = tmp_path / "audit_events.jsonl"
+    monkeypatch.setattr(server, "AUDIT_EVENTS_JSONL", str(audit_path))
+
+    server._audit_event("client.apply_error", None, error="cloudflare timeout")
+
+    row = json.loads(audit_path.read_text(encoding="utf-8").strip())
+    assert row["schema_version"] == server.AUDIT_SCHEMA_VERSION
+    assert row["source"] == "client"
+    assert row["operation"] == "apply_error"
+    assert row["event"] == "client.apply_error"
+    assert row["error"] == "cloudflare timeout"
+
+
+def test_ai_usage_cost_event_includes_context(tmp_path, monkeypatch):
+    costs_path = tmp_path / "ai_costs.jsonl"
+    monkeypatch.setattr(server, "AI_COSTS_JSONL", str(costs_path))
+    server.JOB_CONTEXT.job_id = "job_cost_test"
+    try:
+        totals = server._new_ai_totals()
+        server._record_result_ai_usage(
+            totals,
+            {"detection": {"ai_usage": {"model": "gpt-4o-mini", "input_tokens": 1000, "output_tokens": 100}}},
+            {"endpoint": "/cover/analyze", "batch_id": "batch_cost", "input_path": "Uploads/batch_cost/a.docx", "kind": "cover_vision"},
+        )
+    finally:
+        server.JOB_CONTEXT.job_id = None
+
+    row = json.loads(costs_path.read_text(encoding="utf-8").strip())
+    assert row["schema_version"] == server.AUDIT_SCHEMA_VERSION
+    assert row["operation"] == "ai_call"
+    assert row["status"] == "completed"
+    assert row["job_id"] == "job_cost_test"
+    assert row["endpoint"] == "/cover/analyze"
+    assert row["kind"] == "cover_vision"
+    assert row["total_tokens"] == 1100
+    assert totals["total_tokens"] == 1100

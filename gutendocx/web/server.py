@@ -69,6 +69,7 @@ except Exception:
 
 AI_COSTS_JSONL = os.path.join(OUTPUT_DIR, "ai_costs.jsonl")
 AUDIT_EVENTS_JSONL = os.path.join(OUTPUT_DIR, "audit_events.jsonl")
+AUDIT_SCHEMA_VERSION = 2
 JOBS_DIR = os.path.join(OUTPUT_DIR, "jobs")
 try:
     os.makedirs(JOBS_DIR, exist_ok=True)
@@ -193,6 +194,25 @@ def _request_user_email(request: Optional[Request]) -> Optional[str]:
         return None
     email = email.strip().lower()
     return email or None
+
+
+def _audit_source_for_event(event: str) -> str:
+    prefix = str(event or "").split(".", 1)[0]
+    if prefix in {"client", "admin"}:
+        return prefix
+    if prefix in {"job", "scheduled_cleanup"}:
+        return "system"
+    return "server"
+
+
+def _audit_operation_for_event(event: str) -> str:
+    text = str(event or "")
+    if not text:
+        return "unknown"
+    parts = [p for p in text.split(".") if p]
+    if len(parts) >= 2 and parts[0] in {"client", "admin", "job"}:
+        return parts[1]
+    return parts[0]
 
 
 def _is_admin_request(request: Optional[Request]) -> bool:
@@ -385,11 +405,16 @@ def _analyze_request_summary(req: "AnalyzeRequest") -> Dict[str, Any]:
 
 def _audit_event(event: str, request: Optional[Request] = None, **data: Any) -> None:
     obj: Dict[str, Any] = {
+        "schema_version": AUDIT_SCHEMA_VERSION,
         "ts": int(time.time()),
         "ts_ms": int(time.time() * 1000),
         "event": event,
+        "source": _audit_source_for_event(event),
+        "operation": _audit_operation_for_event(event),
     }
     obj.update(_request_context(request))
+    if obj.get("cf_access_user"):
+        obj["actor_email"] = obj.get("cf_access_user")
     obj.update(data)
     _append_jsonl(AUDIT_EVENTS_JSONL, obj)
 
@@ -481,8 +506,12 @@ def _add_ai_usage(totals: Dict[str, Any], usage: Optional[Dict[str, Any]], event
         rec["total_usd"] = float(rec.get("total_usd") or 0.0) + float(cost)
 
     evt = {
+        "schema_version": AUDIT_SCHEMA_VERSION,
         "ts": int(time.time()),
         "endpoint": "/apply",
+        "operation": "ai_call",
+        "status": "completed",
+        "job_id": _current_job_id(),
         "model": model,
         "input_tokens": int(in_tok),
         "output_tokens": int(out_tok),
@@ -490,7 +519,36 @@ def _add_ai_usage(totals: Dict[str, Any], usage: Optional[Dict[str, Any]], event
         "cost_usd": cost,
     }
     evt.update(event)
+    evt.setdefault("job_id", _current_job_id())
     _append_jsonl(AI_COSTS_JSONL, evt)
+
+
+def _extract_ai_usage(result: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(result, dict):
+        return None
+    direct = result.get("ai_usage")
+    if isinstance(direct, dict):
+        return direct
+    detection = result.get("detection")
+    if isinstance(detection, dict) and isinstance(detection.get("ai_usage"), dict):
+        return detection.get("ai_usage")
+    cover = result.get("cover")
+    if isinstance(cover, dict):
+        detection = cover.get("detection")
+        if isinstance(detection, dict) and isinstance(detection.get("ai_usage"), dict):
+            return detection.get("ai_usage")
+    return None
+
+
+def _record_result_ai_usage(
+    totals: Dict[str, Any],
+    result: Optional[Dict[str, Any]],
+    event: Dict[str, Any],
+) -> None:
+    try:
+        _add_ai_usage(totals, _extract_ai_usage(result), event)
+    except Exception:
+        pass
 
 
 JOB_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="gutendocx-job")
@@ -2471,6 +2529,16 @@ def config_learn_cover_styles(req: LearnCoverStylesRequest, request: Request) ->
             config=cfg,
             vision=req.vision,
         )
+        ai_totals = _new_ai_totals()
+        _record_result_ai_usage(
+            ai_totals,
+            result,
+            {
+                "endpoint": "/config/learn_cover_styles",
+                "input_path": req.input,
+                "kind": "learn_cover_vision",
+            },
+        )
         
         print(f"DEBUG learn_cover_styles result: ok={result.get('ok')}, styles={result.get('styles')}")
         print(f"DEBUG learn_cover_styles config_update: {result.get('config_update')}")
@@ -2485,6 +2553,8 @@ def config_learn_cover_styles(req: LearnCoverStylesRequest, request: Request) ->
             roles=list((result.get("styles") or {}).keys()) if isinstance(result.get("styles"), dict) else [],
             warnings=result.get("warnings"),
             error=result.get("error"),
+            ai_usage=_extract_ai_usage(result),
+            ai_cost=ai_totals,
             duration_ms=int((time.time() - t0) * 1000),
         )
         return result
@@ -2582,6 +2652,16 @@ def config_learn_body_styles(req: LearnBodyStylesRequest, request: Request) -> D
             vision=req.vision,
             min_confidence=min_conf,
         )
+        ai_totals = _new_ai_totals()
+        _record_result_ai_usage(
+            ai_totals,
+            result,
+            {
+                "endpoint": "/config/learn_body_styles",
+                "input_path": req.input,
+                "kind": "learn_body_vision",
+            },
+        )
         
         print(f"DEBUG learn_body_styles result: ok={result.get('ok')}, styles={result.get('styles')}")
         
@@ -2593,6 +2673,8 @@ def config_learn_body_styles(req: LearnBodyStylesRequest, request: Request) -> D
                 input=_file_ref(req.input),
                 error=result.get("error"),
                 warnings=result.get("warnings"),
+                ai_usage=_extract_ai_usage(result),
+                ai_cost=ai_totals,
                 duration_ms=int((time.time() - t0) * 1000),
             )
             return result
@@ -2635,7 +2717,8 @@ def config_learn_body_styles(req: LearnBodyStylesRequest, request: Request) -> D
             style_mapping=result.get("style_mapping"),
             roles=list((result.get("styles") or {}).keys()) if isinstance(result.get("styles"), dict) else [],
             config_saved=bool(result.get("config_saved")),
-            ai_usage=(result.get("ai_usage") if isinstance(result, dict) else None),
+            ai_usage=_extract_ai_usage(result),
+            ai_cost=ai_totals,
             duration_ms=int((time.time() - t0) * 1000),
         )
         return result
@@ -2656,6 +2739,8 @@ def config_learn_body_styles(req: LearnBodyStylesRequest, request: Request) -> D
 
 @app.post("/cover/analyze")
 def cover_analyze(req: AnalyzeRequest, request: Request) -> Dict[str, Any]:
+    t0 = time.time()
+    _audit_event("cover_analyze.started", request, **_analyze_request_summary(req))
     try:
         requested_model = req.model
         effective_model = _force_configured_model(req)
@@ -2702,8 +2787,36 @@ def cover_analyze(req: AnalyzeRequest, request: Request) -> Dict[str, Any]:
             no_layout=bool(req.no_layout),
             vision=bool(req.vision),
         )
+        ai_totals = _new_ai_totals()
+        _record_result_ai_usage(
+            ai_totals,
+            res,
+            {
+                "endpoint": "/cover/analyze",
+                "input_path": req.input,
+                "kind": "cover_vision_analyze",
+            },
+        )
+        _audit_event(
+            "cover_analyze.completed",
+            request,
+            ok=bool(res.get("ok", True)) if isinstance(res, dict) else True,
+            input=_file_ref(req.input),
+            output=_file_ref(res.get("output_path") if isinstance(res, dict) else None),
+            ai_usage=_extract_ai_usage(res),
+            ai_cost=ai_totals,
+            duration_ms=int((time.time() - t0) * 1000),
+        )
         return res
     except Exception as e:
+        _audit_event(
+            "cover_analyze.error",
+            request,
+            input=_file_ref(req.input),
+            error_type=type(e).__name__,
+            error=_bounded_str(e, 500),
+            duration_ms=int((time.time() - t0) * 1000),
+        )
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -3902,6 +4015,9 @@ def reset_config(req: ResetConfigRequest, request: Request) -> Dict[str, Any]:
 
 @app.post("/cover/apply")
 def cover_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
+    t0 = time.time()
+    ai_totals = _new_ai_totals()
+    _audit_event("cover_apply.started", request, **_apply_request_summary(req))
     try:
         requested_model = req.model
         effective_model = _force_configured_model(req)
@@ -3956,6 +4072,16 @@ def cover_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                     no_layout=bool(req.no_layout),
                     vision=bool(req.vision),
                 )
+                _record_result_ai_usage(
+                    ai_totals,
+                    r,
+                    {
+                        "endpoint": "/cover/apply",
+                        "batch_id": req.batch_id,
+                        "input_path": path,
+                        "kind": "cover_vision",
+                    },
+                )
                 results.append({"input_path": path, "result": r})
                 out_path = r.get("output_path")
                 if out_path:
@@ -3975,6 +4101,17 @@ def cover_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
             download_meta = _build_download_meta(zip_path)
             if download_meta:
                 resp["download"] = download_meta
+            _audit_event(
+                "cover_apply.completed",
+                request,
+                ok=True,
+                batch_id=req.batch_id,
+                batch_count=len(batch_files),
+                output=_file_ref(zip_path),
+                download=resp.get("download"),
+                ai_cost=ai_totals,
+                duration_ms=int((time.time() - t0) * 1000),
+            )
             return resp
 
         res = run_cover_pipeline(
@@ -3985,12 +4122,42 @@ def cover_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
             no_layout=bool(req.no_layout),
             vision=bool(req.vision),
         )
+        _record_result_ai_usage(
+            ai_totals,
+            res,
+            {
+                "endpoint": "/cover/apply",
+                "batch_id": req.batch_id,
+                "input_path": req.input,
+                "kind": "cover_vision",
+            },
+        )
 
         download_meta = _build_download_meta(res.get("output_path"))
         if download_meta:
             res["download"] = download_meta
+        _audit_event(
+            "cover_apply.completed",
+            request,
+            ok=bool(res.get("ok", True)) if isinstance(res, dict) else True,
+            batch_id=req.batch_id,
+            input=_file_ref(req.input),
+            output=_file_ref(res.get("output_path") if isinstance(res, dict) else None),
+            download=res.get("download") if isinstance(res, dict) else None,
+            ai_cost=ai_totals,
+            duration_ms=int((time.time() - t0) * 1000),
+        )
         return res
     except Exception as e:
+        _audit_event(
+            "cover_apply.error",
+            request,
+            input=_file_ref(req.input),
+            batch_id=req.batch_id,
+            error_type=type(e).__name__,
+            error=_bounded_str(e, 500),
+            duration_ms=int((time.time() - t0) * 1000),
+        )
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -4003,6 +4170,17 @@ class DebugVisionRequest(BaseModel):
 
 @app.post("/debug/vision")
 def debug_vision(req: DebugVisionRequest, request: Request) -> Dict[str, Any]:
+    t0 = time.time()
+    _audit_event(
+        "debug_vision.started",
+        request,
+        input=_file_ref(req.input),
+        options={
+            "config_path": req.config_path,
+            "model": req.model,
+            "min_confidence": req.min_confidence,
+        },
+    )
     try:
         requested_model = req.model
         effective_model = _force_configured_model(req)
@@ -4028,6 +4206,26 @@ def debug_vision(req: DebugVisionRequest, request: Request) -> Dict[str, Any]:
             c["vision"] = v
             cfg["cover"] = c
         d = detect_cover_roles_vision(req.input, cfg)
+        ai_totals = _new_ai_totals()
+        _record_result_ai_usage(
+            ai_totals,
+            {"detection": d},
+            {
+                "endpoint": "/debug/vision",
+                "input_path": req.input,
+                "kind": "debug_vision",
+            },
+        )
+        _audit_event(
+            "debug_vision.completed",
+            request,
+            ok=not bool(d.get("skip")) if isinstance(d, dict) else True,
+            input=_file_ref(req.input),
+            warnings=d.get("warnings") if isinstance(d, dict) else None,
+            ai_usage=_extract_ai_usage({"detection": d}),
+            ai_cost=ai_totals,
+            duration_ms=int((time.time() - t0) * 1000),
+        )
         return {
             "warnings": d.get("warnings"),
             "vision": d.get("vision"),
@@ -4036,4 +4234,12 @@ def debug_vision(req: DebugVisionRequest, request: Request) -> Dict[str, Any]:
             "skip": d.get("skip"),
         }
     except Exception as e:
+        _audit_event(
+            "debug_vision.error",
+            request,
+            input=_file_ref(req.input),
+            error_type=type(e).__name__,
+            error=_bounded_str(e, 500),
+            duration_ms=int((time.time() - t0) * 1000),
+        )
         raise HTTPException(status_code=400, detail=str(e))
