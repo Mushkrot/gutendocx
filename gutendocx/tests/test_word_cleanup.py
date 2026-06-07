@@ -3,7 +3,11 @@ from docx import Document
 from docx.enum.text import WD_BREAK
 from docx.oxml import OxmlElement
 
-from gutendocx.core.word_cleanup import apply_word_cleanup, parse_word_cleanup_patterns
+from gutendocx.core.word_cleanup import (
+    analyze_word_cleanup,
+    apply_word_cleanup,
+    parse_word_cleanup_patterns,
+)
 from gutendocx.core.whole import _apply_para1_manual_line_break_style
 
 
@@ -121,3 +125,27 @@ def test_cleanup_skips_heading_and_section_break_paragraphs():
     assert [p.text for p in doc.paragraphs] == ["Before", "", "", "After"]
     assert doc.paragraphs[1].style.name == heading_blank.style.name
     assert doc.paragraphs[2].text == section_blank.text
+
+
+def test_analyze_word_cleanup_recommends_safe_patterns():
+    doc = Document()
+    doc.add_paragraph("Before")
+    doc.add_paragraph("")
+    doc.add_paragraph("")
+    blank_with_breaks = doc.add_paragraph("")
+    for _ in range(4):
+        blank_with_breaks.add_run().add_break(WD_BREAK.LINE)
+    doc.add_paragraph("After")
+    nonempty_break = doc.add_paragraph("")
+    nonempty_break.add_run("Keep")
+    nonempty_break.add_run().add_break(WD_BREAK.LINE)
+    nonempty_break.add_run("This")
+
+    advisor = analyze_word_cleanup(doc, {}, 0)
+
+    assert advisor["recommended_patterns"] == ["^p^p", "^p^l^l^l^l"]
+    assert advisor["summary"]["recommended_gaps"] == 1
+    assert advisor["summary"]["paragraphs_to_remove"] == 3
+    assert advisor["summary"]["line_breaks_to_remove"] == 4
+    assert "Text paragraphs" in advisor["report"]
+    assert [p.text for p in doc.paragraphs] == ["Before", "", "", "\n\n\n\n", "After", "Keep\nThis"]

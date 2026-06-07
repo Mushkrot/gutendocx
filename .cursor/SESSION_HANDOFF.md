@@ -34,6 +34,25 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 
 ## Recent Audit
 
+2026-06-07 Word cleanup advisor/report UX:
+
+- Manual `Clean parasite Word marks` remains available under `Whole document -> Text styles`.
+- Added read-only `/word_cleanup/analyze` for structural advisor recommendations. It inspects body blank gaps and returns recommended `^p` / `^l` patterns, candidate summaries, and count-only estimates without sending document text to an external AI service.
+- Web UI now has `Analyze cleanup` and `Apply recommended cleanup` next to the cleanup textarea.
+  - `Analyze cleanup` fills the same editable patterns textarea and shows a concise report below it.
+  - `Apply recommended cleanup` enables cleanup, keeps Body scope on, and launches the existing `Apply Styles` flow.
+  - If the client wants to adjust the recommendation, they edit the textarea manually and press `Apply Styles`.
+- The cleanup textarea has a source/status label that distinguishes saved config patterns, latest analysis recommendations, and manual edits.
+- The cleanup analysis report block has a fixed max height with internal scrolling for long output.
+- Successful Apply now shows a short cleanup popup when cleanup is enabled, for both manual and recommended runs: patterns used, gaps cleaned, empty paragraphs removed, and manual line breaks removed.
+- Verification passed:
+  - `./gutenberg/bin/python -m py_compile gutendocx/core/word_cleanup.py gutendocx/core/whole.py gutendocx/web/server.py gutendocx/tests/test_word_cleanup.py gutendocx/tests/test_word_cleanup_api.py`
+  - `./gutenberg/bin/python -m pytest gutendocx/tests/test_word_cleanup.py gutendocx/tests/test_word_cleanup_api.py gutendocx/tests/test_para1_manual_breaks.py -q` with 15 tests.
+  - `./gutenberg/bin/python -m pytest gutendocx/tests -q` with 18 tests.
+  - extracted Web UI script syntax checked with `node --check -`.
+- Production was restarted and verified: required services active, port `8000` still localhost-bound, local `/health` OK, local `/` serves cleanup analyzer controls plus cleanup popup markup, local `/word_cleanup/analyze` returns expected `pg1014.docx` recommendations, and public URL still redirects to Cloudflare Access.
+- `config.yaml` remains runtime/user state and should not be staged unless explicitly needed.
+
 2026-06-07 managed Word mark cleanup:
 
 - Added a UI-controlled body cleanup for parasite Word marks, disabled by default.

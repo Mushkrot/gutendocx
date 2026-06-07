@@ -104,6 +104,45 @@
     .field label { min-width: unset; }
     .field input[type=text] { width: 340px; }
     #wordCleanupPatterns { width: 100%; min-height: 96px; box-sizing: border-box; }
+    .cleanup-actions { margin-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .cleanup-report {
+      margin-top: 8px;
+      max-width: 620px;
+      width: 100%;
+      max-height: 150px;
+      overflow-y: auto;
+      overflow-x: auto;
+      box-sizing: border-box;
+      white-space: pre-line;
+      line-height: 1.4;
+    }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(17, 24, 39, 0.38);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1200;
+      padding: 20px;
+    }
+    .modal-box {
+      width: min(460px, 100%);
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      box-shadow: 0 18px 48px rgba(0,0,0,0.22);
+      padding: 18px;
+    }
+    .modal-box h2 {
+      margin: 0 0 8px 0;
+      font-size: 18px;
+    }
+    .modal-box p {
+      margin: 0 0 14px 0;
+      line-height: 1.45;
+      white-space: pre-line;
+    }
     .download-field { flex: 1; min-width: 260px; }
   </style>
 </head>
@@ -337,7 +376,14 @@
           <div class="field" style="margin-top:8px; max-width:620px;">
             <label for="wordCleanupPatterns">Patterns</label>
             <textarea id="wordCleanupPatterns" placeholder="^p^p&#10;^p^l^l^l^l"></textarea>
+            <span id="wordCleanupPatternsStatus" class="hint">No saved cleanup patterns. Click Analyze cleanup to detect them.</span>
           </div>
+          <div class="cleanup-actions">
+            <button id="btnWordCleanupAnalyze" type="button" class="action-btn action-btn-cyan" title="Analyze the uploaded DOCX and suggest safe cleanup patterns">Analyze cleanup</button>
+            <button id="btnWordCleanupApplyRecommended" type="button" class="primary-button secondary" disabled title="Enable the recommended cleanup and run Apply Styles">Apply recommended cleanup</button>
+            <span class="hint">Review or edit the patterns, then apply.</span>
+          </div>
+          <div id="wordCleanupReport" class="hint cleanup-report" style="display:none;"></div>
         </div>
         <div class="card" id="cardBody">
           <details id="bodyDetails">
@@ -492,6 +538,13 @@
       <div id="busyText">Working…</div>
     </div>
   </div>
+  <div id="cleanupReportModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="cleanupReportTitle">
+    <div class="modal-box">
+      <h2 id="cleanupReportTitle">Cleanup report</h2>
+      <p id="cleanupReportText"></p>
+      <button id="cleanupReportClose" type="button" class="primary-button">OK</button>
+    </div>
+  </div>
   <div id="toasts" class="toast-container"></div>
 
   <script>
@@ -521,6 +574,8 @@
     let specialStylesCache = [];
     let currentBatch = null;
     let adminControlledModel = null;
+    let wordCleanupAdvisor = null;
+    let wordCleanupPatternsProgrammatic = false;
 
     // OpenAI API standard pricing per 1M tokens, checked 2026-05-13.
     const PRICES = {
@@ -937,6 +992,8 @@
     function setButtonsDisabled(dis) {
       try { $("btnApply").disabled = dis; } catch {}
       try { $("btnTocApply").disabled = dis; } catch {}
+      try { $("btnWordCleanupAnalyze").disabled = dis; } catch {}
+      updateWordCleanupRecommendationButton(dis);
     }
 
     function showToast(kind, text, ms = 5500) {
@@ -946,6 +1003,100 @@
       n.textContent = text;
       box.appendChild(n);
       setTimeout(() => { try { box.removeChild(n); } catch {} }, ms);
+    }
+
+    function updateWordCleanupRecommendationButton(forceDisabled = false) {
+      const btn = document.getElementById('btnWordCleanupApplyRecommended');
+      if (!btn) return;
+      const patterns = wordCleanupAdvisor && Array.isArray(wordCleanupAdvisor.recommended_patterns)
+        ? wordCleanupAdvisor.recommended_patterns
+        : [];
+      btn.disabled = !!forceDisabled || patterns.length === 0;
+    }
+
+    function cleanupFromApplyResult(result) {
+      if (!result || typeof result !== 'object') return null;
+      const body = result.body && typeof result.body === 'object' ? result.body : null;
+      const whole = body && body.whole && typeof body.whole === 'object'
+        ? body.whole
+        : (result.whole && typeof result.whole === 'object' ? result.whole : null);
+      const cleanup = whole && whole.word_cleanup && typeof whole.word_cleanup === 'object'
+        ? whole.word_cleanup
+        : null;
+      return cleanup;
+    }
+
+    function summarizeCleanupResult(json) {
+      const out = {
+        seen: false,
+        enabled: false,
+        files: 0,
+        pattern_count: 0,
+        gaps_modified: 0,
+        paragraphs_removed: 0,
+        line_breaks_removed: 0
+      };
+      const add = (cleanup) => {
+        if (!cleanup || typeof cleanup !== 'object') return;
+        out.seen = true;
+        out.enabled = out.enabled || !!cleanup.enabled;
+        out.files += 1;
+        const patterns = Array.isArray(cleanup.patterns) ? cleanup.patterns : [];
+        out.pattern_count = Math.max(out.pattern_count, patterns.length);
+        out.gaps_modified += Number(cleanup.gaps_modified || 0);
+        out.paragraphs_removed += Number(cleanup.paragraphs_removed || 0);
+        out.line_breaks_removed += Number(cleanup.line_breaks_removed || 0);
+      };
+
+      if (json && json.batch && Array.isArray(json.batch.items)) {
+        for (const item of json.batch.items) {
+          add(cleanupFromApplyResult(item && item.result));
+        }
+      } else {
+        add(cleanupFromApplyResult(json));
+      }
+      return out;
+    }
+
+    function cleanupSummaryText(stats) {
+      if (!stats || !stats.seen || !stats.enabled) return '';
+      return [
+        'Word cleanup finished.',
+        `Patterns used: ${stats.pattern_count}.`,
+        `Gaps cleaned: ${stats.gaps_modified}.`,
+        `Empty paragraphs removed: ${stats.paragraphs_removed}.`,
+        `Manual line breaks removed: ${stats.line_breaks_removed}.`
+      ].join('\n');
+    }
+
+    function showCleanupReportPopup(json) {
+      const stats = summarizeCleanupResult(json);
+      const text = cleanupSummaryText(stats);
+      if (!text) return;
+      const modal = document.getElementById('cleanupReportModal');
+      const msg = document.getElementById('cleanupReportText');
+      if (!modal || !msg) {
+        showToast('success', text.replace(/\n/g, ' '), 9000);
+        return;
+      }
+      msg.textContent = text;
+      modal.style.display = 'flex';
+    }
+
+    function closeCleanupReportPopup() {
+      const modal = document.getElementById('cleanupReportModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    const cleanupReportClose = document.getElementById('cleanupReportClose');
+    if (cleanupReportClose) {
+      cleanupReportClose.addEventListener('click', closeCleanupReportPopup);
+    }
+    const cleanupReportModal = document.getElementById('cleanupReportModal');
+    if (cleanupReportModal) {
+      cleanupReportModal.addEventListener('click', (event) => {
+        if (event.target === cleanupReportModal) closeCleanupReportPopup();
+      });
     }
 
     const downloadState = {
@@ -1388,11 +1539,128 @@
       if (card) card.classList.toggle('muted', !enabled);
       if (patterns) patterns.disabled = !enabled;
     }
+
+    function setWordCleanupPatternsValue(value) {
+      const patternsBox = document.getElementById('wordCleanupPatterns');
+      if (!patternsBox) return;
+      wordCleanupPatternsProgrammatic = true;
+      patternsBox.value = value || '';
+      wordCleanupPatternsProgrammatic = false;
+    }
+
+    function setWordCleanupPatternsStatus(text) {
+      const status = document.getElementById('wordCleanupPatternsStatus');
+      if (!status) return;
+      status.textContent = text || '';
+      status.style.display = text ? 'inline-block' : 'none';
+    }
+
+    function renderWordCleanupAdvisor(advisor) {
+      wordCleanupAdvisor = advisor && typeof advisor === 'object' ? advisor : null;
+      const report = document.getElementById('wordCleanupReport');
+      const enabled = document.getElementById('wordCleanupEnabled');
+      const recommended = wordCleanupAdvisor && Array.isArray(wordCleanupAdvisor.recommended_patterns)
+        ? wordCleanupAdvisor.recommended_patterns
+        : [];
+      const summary = wordCleanupAdvisor && wordCleanupAdvisor.summary ? wordCleanupAdvisor.summary : {};
+      const lines = [];
+      if (wordCleanupAdvisor && wordCleanupAdvisor.report) {
+        lines.push(wordCleanupAdvisor.report);
+      }
+      if (recommended.length) {
+        lines.push(`Recommended patterns: ${recommended.join(', ')}`);
+        lines.push(`Estimated cleanup: ${Number(summary.paragraphs_to_remove || 0)} empty paragraph(s), ${Number(summary.line_breaks_to_remove || 0)} manual line break(s).`);
+        if (enabled) enabled.checked = true;
+        setWordCleanupPatternsValue(recommended.join('\n'));
+        setWordCleanupPatternsStatus('Recommended by latest analysis for the current file.');
+      } else if (wordCleanupAdvisor) {
+        lines.push('No cleanup patterns were inserted.');
+        setWordCleanupPatternsStatus('Latest analysis found no high-confidence cleanup patterns.');
+      }
+      if (report) {
+        report.textContent = lines.join('\n');
+        report.style.display = lines.length ? 'inline-block' : 'none';
+      }
+      updateWordCleanupUI();
+      updateWordCleanupRecommendationButton(false);
+    }
+
+    async function runWordCleanupAnalyze() {
+      const payload = getPayload({ forceDryRun: true, includeDryRun: true, includeBatch: false });
+      if (!payload.input || !payload.input.trim()) {
+        showToast('error', 'Please upload a file first using the "Upload files…" button');
+        return;
+      }
+      const path = '/word_cleanup/analyze';
+      auditClient('word_cleanup_analyze_started', { endpoint: path, payload: auditPayloadSummary(payload) });
+      setBusy(true, 'Analyzing parasite Word marks…');
+      setButtonsDisabled(true);
+      try {
+        const json = await callApi(path, payload);
+        $("output").value = JSON.stringify(json, null, 2);
+        const advisor = json && json.word_cleanup_advisor ? json.word_cleanup_advisor : null;
+        renderWordCleanupAdvisor(advisor);
+        auditClient('word_cleanup_analyze_completed', {
+          endpoint: path,
+          ok: true,
+          summary: advisor && advisor.summary,
+          recommended_pattern_count: advisor && Array.isArray(advisor.recommended_patterns) ? advisor.recommended_patterns.length : 0
+        });
+        showToast('success', 'Word cleanup analysis completed');
+      } catch (e) {
+        $("output").value = String(e);
+        wordCleanupAdvisor = null;
+        updateWordCleanupRecommendationButton(false);
+        auditClient('word_cleanup_analyze_error', auditErrorData(e, { endpoint: path }));
+        showToast('error', String(e));
+      } finally {
+        setBusy(false);
+        setButtonsDisabled(false);
+      }
+    }
+
+    function applyRecommendedWordCleanup() {
+      const recommended = wordCleanupAdvisor && Array.isArray(wordCleanupAdvisor.recommended_patterns)
+        ? wordCleanupAdvisor.recommended_patterns
+        : [];
+      if (!recommended.length) {
+        showToast('error', 'Run Analyze cleanup first. No recommended cleanup patterns are available yet.');
+        return;
+      }
+      const enabled = document.getElementById('wordCleanupEnabled');
+      if (enabled) enabled.checked = true;
+      setWordCleanupPatternsValue(recommended.join('\n'));
+      setWordCleanupPatternsStatus('Applying patterns recommended by latest analysis.');
+      if ($("scopeBody")) $("scopeBody").checked = true;
+      updateWordCleanupUI();
+      updateScopeUI();
+      $("btnApply").click();
+    }
+
     const wordCleanupToggle = document.getElementById('wordCleanupEnabled');
     if (wordCleanupToggle) {
       wordCleanupToggle.addEventListener('change', updateWordCleanupUI);
     }
+    const wordCleanupPatternsBox = document.getElementById('wordCleanupPatterns');
+    if (wordCleanupPatternsBox) {
+      wordCleanupPatternsBox.addEventListener('input', () => {
+        if (wordCleanupPatternsProgrammatic) return;
+        wordCleanupAdvisor = null;
+        updateWordCleanupRecommendationButton(false);
+        const value = wordCleanupPatternsBox.value.trim();
+        setWordCleanupPatternsStatus(value ? 'Edited manually. Apply Styles will use the current patterns.' : 'No cleanup patterns entered.');
+      });
+    }
+    const wordCleanupAnalyzeBtn = document.getElementById('btnWordCleanupAnalyze');
+    if (wordCleanupAnalyzeBtn) {
+      wordCleanupAnalyzeBtn.addEventListener('click', runWordCleanupAnalyze);
+    }
+    const wordCleanupApplyRecommendedBtn = document.getElementById('btnWordCleanupApplyRecommended');
+    if (wordCleanupApplyRecommendedBtn) {
+      wordCleanupApplyRecommendedBtn.addEventListener('click', applyRecommendedWordCleanup);
+    }
     updateWordCleanupUI();
+    updateWordCleanupRecommendationButton(false);
 
     // Function to populate all font selects (called after fonts are loaded)
     function populateAllFontSelects() {
@@ -1453,7 +1721,16 @@
         }
         if (wordCleanupPatterns) {
           const patterns = Array.isArray(wordCleanup.patterns) ? wordCleanup.patterns : [];
-          wordCleanupPatterns.value = patterns.join('\n');
+          setWordCleanupPatternsValue(patterns.join('\n'));
+          if (patterns.length) {
+            setWordCleanupPatternsStatus(
+              wordCleanup.enabled
+                ? 'Saved patterns from config. Click Analyze cleanup to refresh for the current file.'
+                : 'Saved patterns from config, but cleanup is currently disabled.'
+            );
+          } else {
+            setWordCleanupPatternsStatus('No saved cleanup patterns. Click Analyze cleanup to detect them.');
+          }
         }
         updateWordCleanupUI();
         
@@ -1783,6 +2060,7 @@
         $("output").value = JSON.stringify(json, null, 2);
         await maybeShowPreview(json);
         renderSpentCost(json);
+        showCleanupReportPopup(json);
         auditClient('apply_completed', {
           ok: true,
           output_path: json && json.output_path,

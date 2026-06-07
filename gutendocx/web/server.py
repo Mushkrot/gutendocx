@@ -21,9 +21,14 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from gutendocx.core.config import load_config, save_config
 from gutendocx.core.cover import run_cover_pipeline, learn_cover_styles
+from gutendocx.core.loader import Loader
 from gutendocx.core.vision import detect_cover_roles_vision
-from gutendocx.core.whole import analyze_whole_document, apply_whole_document
-from gutendocx.core.word_cleanup import WORD_CLEANUP_REPLACEMENT, parse_word_cleanup_patterns
+from gutendocx.core.whole import _compute_body_start_index, analyze_whole_document, apply_whole_document
+from gutendocx.core.word_cleanup import (
+    WORD_CLEANUP_REPLACEMENT,
+    analyze_word_cleanup,
+    parse_word_cleanup_patterns,
+)
 from gutendocx.core.toc import build_toc
 from gutendocx.core.libreoffice_toc import run_libreoffice_convert
 
@@ -3094,6 +3099,48 @@ def whole_analyze(req: AnalyzeRequest, request: Request) -> Dict[str, Any]:
     except Exception as e:
         _audit_event(
             "whole_analyze.error",
+            request,
+            input=_file_ref(req.input),
+            error_type=type(e).__name__,
+            error=_bounded_str(e, 500),
+            duration_ms=int((time.time() - t0) * 1000),
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/word_cleanup/analyze")
+def word_cleanup_analyze(req: AnalyzeRequest, request: Request) -> Dict[str, Any]:
+    """Analyze body gaps and recommend safe parasite Word-mark cleanup patterns.
+
+    The pass is read-only and structural: it does not send document text to an
+    external model, save config, or modify the DOCX.
+    """
+    t0 = time.time()
+    _audit_event("word_cleanup_analyze.started", request, **_analyze_request_summary(req))
+    try:
+        cfg = load_config(req.config_path)
+        doc = Loader().open(req.input)
+        body_start = _compute_body_start_index(doc)
+        advisor = analyze_word_cleanup(doc, cfg, body_start)
+        summary = advisor.get("summary") if isinstance(advisor, dict) else None
+        _audit_event(
+            "word_cleanup_analyze.completed",
+            request,
+            ok=True,
+            input=_file_ref(req.input),
+            summary=summary,
+            recommended_pattern_count=len(advisor.get("recommended_patterns") or [])
+            if isinstance(advisor, dict)
+            else 0,
+            duration_ms=int((time.time() - t0) * 1000),
+        )
+        return {
+            "ok": True,
+            "word_cleanup_advisor": advisor,
+        }
+    except Exception as e:
+        _audit_event(
+            "word_cleanup_analyze.error",
             request,
             input=_file_ref(req.input),
             error_type=type(e).__name__,

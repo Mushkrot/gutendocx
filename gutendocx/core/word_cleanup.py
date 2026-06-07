@@ -171,6 +171,126 @@ def _gap_matches(records: List[Dict[str, Any]], patterns: List[Tuple[str, ...]])
     return any(_contains_pattern(tokens, pattern) for pattern in patterns)
 
 
+def _gap_tokens(records: List[Dict[str, Any]]) -> List[str]:
+    tokens: List[str] = []
+    for rec in records:
+        tokens.append("p")
+        tokens.extend("l" for _ in range(int(rec.get("line_breaks", 0))))
+    return tokens
+
+
+def _token_pattern_to_word_code(tokens: Sequence[str]) -> str:
+    return "".join(f"^{token}" for token in tokens)
+
+
+def _iter_cleanable_gaps(doc, config: Dict[str, Any], body_start: int) -> List[List[Dict[str, Any]]]:
+    gaps: List[List[Dict[str, Any]]] = []
+    current_gap: List[Dict[str, Any]] = []
+
+    def flush_gap() -> None:
+        nonlocal current_gap
+        if current_gap:
+            gaps.append(current_gap)
+            current_gap = []
+
+    paragraphs_snapshot = list(getattr(doc, "paragraphs", []) or [])
+    for idx, p in enumerate(paragraphs_snapshot):
+        if idx < body_start:
+            continue
+        if _is_cleanable_blank_paragraph(p, config):
+            current_gap.append(
+                {
+                    "paragraph": p,
+                    "line_breaks": _manual_line_break_count(p),
+                }
+            )
+        else:
+            flush_gap()
+    flush_gap()
+    return gaps
+
+
+def analyze_word_cleanup(doc, config: Dict[str, Any], body_start: int) -> Dict[str, Any]:
+    """Return safe cleanup recommendations for parasite ^p/^l body gaps."""
+
+    gaps = _iter_cleanable_gaps(doc, config, body_start)
+    candidates: Dict[str, Dict[str, Any]] = {}
+
+    def add_candidate(pattern: str, gap: List[Dict[str, Any]]) -> None:
+        cur = candidates.setdefault(
+            pattern,
+            {
+                "pattern": pattern,
+                "occurrences": 0,
+                "sample_gap_shapes": [],
+                "confidence": "high",
+            },
+        )
+        cur["occurrences"] += 1
+        if len(cur["sample_gap_shapes"]) < 3:
+            cur["sample_gap_shapes"].append(_token_pattern_to_word_code(_gap_tokens(gap)))
+
+    for gap in gaps:
+        if len(gap) >= 2:
+            add_candidate("^p^p", gap)
+        for rec in gap:
+            line_breaks = int(rec.get("line_breaks", 0))
+            if line_breaks > 0:
+                add_candidate("^p" + ("^l" * line_breaks), gap)
+
+    recommended_patterns = sorted(
+        candidates.keys(),
+        key=lambda p: (
+            0 if p == "^p^p" else 1,
+            len(p),
+            p,
+        ),
+    )
+    pattern_tokens = [_pattern_tokens(pattern) for pattern in recommended_patterns]
+
+    matched_gaps: List[List[Dict[str, Any]]] = []
+    for gap in gaps:
+        if _gap_matches(gap, pattern_tokens):
+            matched_gaps.append(gap)
+
+    paragraphs_to_remove = sum(len(gap) for gap in matched_gaps)
+    line_breaks_to_remove = sum(int(rec.get("line_breaks", 0)) for gap in matched_gaps for rec in gap)
+    total_cleanable_paragraphs = sum(len(gap) for gap in gaps)
+    total_cleanable_line_breaks = sum(int(rec.get("line_breaks", 0)) for gap in gaps for rec in gap)
+
+    candidates_list = [
+        {
+            **candidates[pattern],
+            "reason": "Repeated blank paragraph gap" if pattern == "^p^p" else "Blank paragraph with manual line breaks",
+        }
+        for pattern in recommended_patterns
+    ]
+
+    report_lines: List[str] = []
+    if recommended_patterns:
+        report_lines.append(
+            f"Found {len(matched_gaps)} cleanup gap(s). Recommended cleanup would remove "
+            f"{paragraphs_to_remove} empty paragraph(s) and {line_breaks_to_remove} manual line break(s)."
+        )
+        report_lines.append("Text paragraphs, headings, TOC, section/page breaks, fields, and embedded objects are skipped.")
+    else:
+        report_lines.append("No high-confidence parasite Word-mark cleanup candidates were found.")
+
+    return {
+        "recommended_patterns": recommended_patterns,
+        "candidates": candidates_list,
+        "summary": {
+            "cleanable_gaps": len(gaps),
+            "recommended_gaps": len(matched_gaps),
+            "cleanable_paragraphs": total_cleanable_paragraphs,
+            "cleanable_line_breaks": total_cleanable_line_breaks,
+            "paragraphs_to_remove": paragraphs_to_remove,
+            "line_breaks_to_remove": line_breaks_to_remove,
+        },
+        "report": "\n".join(report_lines),
+    }
+
+
 def apply_word_cleanup(doc, config: Dict[str, Any], body_start: int) -> Dict[str, Any]:
     cleanup_cfg = ((config or {}).get("word_cleanup") or {}) or {}
     enabled = bool(cleanup_cfg.get("enabled", False))
@@ -203,29 +323,10 @@ def apply_word_cleanup(doc, config: Dict[str, Any], body_start: int) -> Dict[str
 
     pattern_tokens = [_pattern_tokens(pattern) for pattern in patterns]
     matched_records: List[Dict[str, Any]] = []
-    current_gap: List[Dict[str, Any]] = []
-
-    def flush_gap() -> None:
-        nonlocal current_gap
-        if current_gap and _gap_matches(current_gap, pattern_tokens):
-            matched_records.extend(current_gap)
+    for gap in _iter_cleanable_gaps(doc, config, body_start):
+        if _gap_matches(gap, pattern_tokens):
+            matched_records.extend(gap)
             result["gaps_modified"] += 1
-        current_gap = []
-
-    paragraphs_snapshot = list(getattr(doc, "paragraphs", []) or [])
-    for idx, p in enumerate(paragraphs_snapshot):
-        if idx < body_start:
-            continue
-        if _is_cleanable_blank_paragraph(p, config):
-            current_gap.append(
-                {
-                    "paragraph": p,
-                    "line_breaks": _manual_line_break_count(p),
-                }
-            )
-        else:
-            flush_gap()
-    flush_gap()
 
     for rec in matched_records:
         p = rec.get("paragraph")

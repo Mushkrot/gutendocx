@@ -30,7 +30,7 @@
 - `Uploads/` and `output/` are operational data directories and may contain client files.
 - Batch Apply uses background jobs persisted under `output/jobs/`; inspect `/jobs/<job_id>` state when diagnosing long-running batch processing.
 - The primary Web UI upload control should remain a normal multi-file `.docx` picker for Windows compatibility. Use a separate clearly labeled control if folder upload is reintroduced.
-- Optional body Word-mark cleanup lives under `Whole document -> Text styles`; it accepts `^p` / `^l` patterns and only cleans eligible blank/manual-line-break-only body gaps before style normalization.
+- Optional body Word-mark cleanup lives under `Whole document -> Text styles`; it accepts `^p` / `^l` patterns and only cleans eligible blank/manual-line-break-only body gaps before style normalization. The same block also has `Analyze cleanup` to fill recommended patterns from a read-only structural advisor, a source label for saved/analyzed/manual pattern values, a scrollable analysis report, and an Apply-result popup with cleanup counts.
 - `config.yaml` is operational/user-editable state and may be changed by the platform during normal use. Inspect diffs before committing, and do not revert it automatically.
 - Diagnostic audit events live in `output/audit_events.jsonl`; use them to reconstruct user actions/options/errors while treating them as sensitive operational metadata.
 - Scheduled retention cleanup removes uploaded/generated files older than 15 days while preserving audit/cost logs and active job state.

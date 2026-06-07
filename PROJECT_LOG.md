@@ -8,6 +8,37 @@
 
 ## Current Session - Resume Point
 
+**2026-06-07:** Extended parasite Word-mark cleanup with advisor/report UX.
+
+Current iteration:
+
+- Kept the manual `Clean parasite Word marks` workflow unchanged.
+- Added a read-only `/word_cleanup/analyze` endpoint that structurally inspects body blank gaps and recommends high-confidence `^p` / `^l` cleanup patterns without sending document text to an external AI service.
+- Added `Analyze cleanup` and `Apply recommended cleanup` controls under `Whole document -> Text styles`.
+  - `Analyze cleanup` shows a concise report and fills the existing patterns textarea with recommended patterns.
+  - The client can edit the textarea before applying, or run `Apply recommended cleanup` to enable the recommendation and launch the existing `Apply Styles` flow.
+- Added a short cleanup report popup after successful Apply when cleanup is enabled, covering both manual and recommended cleanup:
+  - patterns used;
+  - gaps cleaned;
+  - empty paragraphs removed;
+  - manual line breaks removed.
+- Added a source/status label under the cleanup `Patterns` textarea so the client can tell whether values came from saved config, the latest cleanup analysis, or manual editing.
+- Limited the cleanup analysis report block height and enabled internal scrolling so long reports do not stretch the page.
+- Added analyzer/API tests while keeping the prior manual cleanup and `Para1` manual-line-break behavior covered.
+- Verification:
+  - `./gutenberg/bin/python -m py_compile gutendocx/core/word_cleanup.py gutendocx/core/whole.py gutendocx/web/server.py gutendocx/tests/test_word_cleanup.py gutendocx/tests/test_word_cleanup_api.py`
+  - `./gutenberg/bin/python -m pytest gutendocx/tests/test_word_cleanup.py gutendocx/tests/test_word_cleanup_api.py gutendocx/tests/test_para1_manual_breaks.py -q` passed: 15 tests.
+  - `./gutenberg/bin/python -m pytest gutendocx/tests -q` passed: 18 tests.
+  - extracted Web UI script syntax checked with `node --check -`.
+- Production service was restarted after the required pre-checks.
+- Post-restart verification:
+  - `gutendocx.service`, `cloudflared`, `server-firewall`, `tailscaled`, and `ssh` active;
+  - `127.0.0.1:8000` bind preserved;
+  - local `/health` OK;
+  - local `/` serves cleanup analyzer controls and cleanup popup markup;
+  - local `/word_cleanup/analyze` on `Simples/pg1014.docx` returns the expected patterns and `13`/`39`/`55` cleanup estimate;
+  - public URL still redirects to Cloudflare Access login.
+
 **2026-06-07:** Implemented managed cleanup for parasite Word marks in body text.
 
 Current iteration:
