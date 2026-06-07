@@ -1,6 +1,6 @@
 # GutenDocx Session Handoff
 
-Last updated: 2026-05-26 UTC
+Last updated: 2026-06-07 UTC
 
 ## Start Here
 
@@ -33,6 +33,24 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Diagnostic audit events are written to `output/audit_events.jsonl`. They should capture what the user clicked/tried, selected options, uploaded file metadata, endpoint timings, outputs, and errors without storing document contents.
 
 ## Recent Audit
+
+2026-06-07 managed Word mark cleanup:
+
+- Added a UI-controlled body cleanup for parasite Word marks, disabled by default.
+- The main UI now has `Clean parasite Word marks` under `Whole document -> Text styles`, next to the detected body-style inventory.
+- Users can enter `^p` / `^l` patterns such as `^p^p` or `^p^l^l^l^l`; separators are whitespace, comma, or semicolon.
+- The backend stores settings under `word_cleanup` with fixed replacement `^p` and validates that enabled patterns only use `^p` and `^l`.
+- The DOCX pipeline runs cleanup after body start detection and before body/headings/`Para1` style passes.
+- Cleanup only removes eligible blank/manual-line-break-only body paragraphs in matching blank gaps. It does not treat normal text paragraph endings as removable `^p`.
+- Headings, TOC/protected styles, page/section breaks, fields, embedded objects, and non-empty paragraphs are skipped.
+- Apply results now include `whole.word_cleanup`, and apply audit completion events include count-only cleanup summaries.
+- Verification passed:
+  - `./gutenberg/bin/python -m py_compile gutendocx/core/word_cleanup.py gutendocx/core/whole.py gutendocx/web/server.py gutendocx/tests/test_word_cleanup.py gutendocx/tests/test_word_cleanup_api.py`
+  - `./gutenberg/bin/python -m pytest gutendocx/tests -q` with 16 tests.
+  - extracted Web UI script syntax checked with `node --check -`.
+- Production was restarted and verified: required services active, port `8000` still localhost-bound, local `/health` OK, local `/` serves `Clean parasite Word marks`, local `/config` returns `word_cleanup`, and public URL still redirects to Cloudflare Access.
+- First client test artifact was generated from `pg1014.docx` with cleanup enabled and no other intentional UI changes. Metadata showed `13` gaps modified, `39` empty paragraphs removed, and `55` manual line breaks removed. The result was sent to the client for testing; wait for feedback before changing cleanup semantics.
+- Pre-existing runtime `config.yaml` diff remains user/runtime state and was not intentionally changed.
 
 2026-05-26 logging analytics/admin observability:
 

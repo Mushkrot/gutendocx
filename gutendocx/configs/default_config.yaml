@@ -111,6 +111,11 @@ options:
   normalize_direct_formatting: false
   backup_originals: false
 
+word_cleanup:
+  enabled: false
+  patterns: []
+  replacement: "^p"
+
 output:
   dir: "output"
   versioning: false

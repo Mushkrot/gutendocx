@@ -8,6 +8,41 @@
 
 ## Current Session - Resume Point
 
+**2026-06-07:** Implemented managed cleanup for parasite Word marks in body text.
+
+Current iteration:
+
+- Added a UI-controlled `word_cleanup` setting for body processing, disabled by default.
+- Added `Clean parasite Word marks` under `Whole document -> Text styles` with a textarea for `^p` / `^l` patterns and fixed replacement mode `^p`.
+- Supported UI payload shape: `styles.word_cleanup = { enabled, patterns_text }`.
+- Added config schema defaults:
+  - `word_cleanup.enabled: false`
+  - `word_cleanup.patterns: []`
+  - `word_cleanup.replacement: "^p"`
+- Added deterministic DOCX cleanup before body/headings/`Para1` style passes:
+  - only body-zone cleanable blank or manual-line-break-only paragraphs are eligible;
+  - normal text paragraph boundaries are not treated as removable `^p`;
+  - headings, TOC/protected styles, page/section breaks, fields, and embedded objects are skipped.
+- Added cleanup result metadata under `whole.word_cleanup` and audit completion summaries with counts only.
+- Added parser and DOCX cleanup tests while preserving the previous `Para1=>left` behavior.
+- Verification:
+  - `./gutenberg/bin/python -m py_compile gutendocx/core/word_cleanup.py gutendocx/core/whole.py gutendocx/web/server.py gutendocx/tests/test_word_cleanup.py gutendocx/tests/test_word_cleanup_api.py`
+  - `./gutenberg/bin/python -m pytest gutendocx/tests -q` passed: 16 tests.
+  - extracted Web UI script syntax checked with `node --check -`.
+- Production service was restarted after the required pre-checks.
+- Post-restart verification:
+  - `gutendocx.service`, `cloudflared`, `server-firewall`, `tailscaled`, and `ssh` active;
+  - `127.0.0.1:8000` bind preserved;
+  - local `/health` OK;
+  - local `/` serves `Clean parasite Word marks`;
+  - local `/config` returns `word_cleanup`;
+  - public URL still redirects to Cloudflare Access login.
+- First client test artifact:
+  - processed `pg1014.docx` with cleanup enabled and no other intentional UI changes;
+  - audit/job metadata showed `13` gaps modified, `39` empty paragraphs removed, and `55` manual line breaks removed;
+  - resulting DOCX/PDF/ZIP were sent to the client for testing; wait for client feedback before changing cleanup semantics.
+- Runtime `config.yaml` had a pre-existing user/runtime diff and was not intentionally edited.
+
 **2026-05-26:** Improved logging analytics and admin observability without changing file processing.
 
 Current iteration:

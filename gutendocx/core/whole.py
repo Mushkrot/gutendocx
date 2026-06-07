@@ -13,6 +13,7 @@ from .scan import _style_key, _style_name, _has_paragraph_overrides
 from .cover import _ensure_output_path
 from .styles_xml import cleanup_styles_xml
 from .layout import ensure_body_section_with_numbering, analyze_document_sections, ensure_blank_page_after_cover, apply_footer_styles
+from .word_cleanup import apply_word_cleanup
 
 
 def _has_explicit_page_break(p) -> bool:
@@ -809,6 +810,7 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
     doc = loader.open(input_path)
 
     body_start = _compute_body_start_index(doc)
+    word_cleanup = apply_word_cleanup(doc, config, body_start)
 
     norm_cfg = (((config or {}).get("cover", {}) or {}).get("normalize", {}) or {})
     collapse_misc = bool(norm_cfg.get("collapse_misc_to_normal", False))
@@ -1073,6 +1075,7 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
             "styles_cleanup": cleanup_stats,
             "body_overrides": body_overrides,
             "headings_overrides": headings_overrides,
+            "word_cleanup": word_cleanup,
             "para1_manual_breaks": para1_manual_breaks,
             "special_overrides": special_overrides,
             "blank_page_fix": blank_page_result,

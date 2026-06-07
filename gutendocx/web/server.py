@@ -23,6 +23,7 @@ from gutendocx.core.config import load_config, save_config
 from gutendocx.core.cover import run_cover_pipeline, learn_cover_styles
 from gutendocx.core.vision import detect_cover_roles_vision
 from gutendocx.core.whole import analyze_whole_document, apply_whole_document
+from gutendocx.core.word_cleanup import WORD_CLEANUP_REPLACEMENT, parse_word_cleanup_patterns
 from gutendocx.core.toc import build_toc
 from gutendocx.core.libreoffice_toc import run_libreoffice_convert
 
@@ -262,6 +263,20 @@ def _styles_summary(styles: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         val = styles.get(key)
         if isinstance(val, dict):
             out[key] = val
+    wc = styles.get("word_cleanup")
+    if isinstance(wc, dict):
+        patterns_text = wc.get("patterns_text")
+        pattern_count = 0
+        if isinstance(patterns_text, str) and patterns_text.strip():
+            try:
+                pattern_count = len(parse_word_cleanup_patterns(patterns_text))
+            except ValueError:
+                pattern_count = 0
+        out["word_cleanup"] = {
+            "enabled": bool(wc.get("enabled")),
+            "pattern_count": pattern_count,
+            "replacement": WORD_CLEANUP_REPLACEMENT,
+        }
     return out
 
 
@@ -348,6 +363,73 @@ def _merge_ui_style_overrides(cfg: Dict[str, Any], styles: Optional[Dict[str, An
             if new:
                 so_specials[name] = new
         cfg["special_overrides"] = so_specials
+
+
+def _merge_ui_word_cleanup(cfg: Dict[str, Any], styles: Optional[Dict[str, Any]]) -> None:
+    if not isinstance(styles, dict):
+        return
+    cleanup_ov = styles.get("word_cleanup")
+    if not isinstance(cleanup_ov, dict):
+        return
+
+    enabled = bool(cleanup_ov.get("enabled"))
+    patterns_text = cleanup_ov.get("patterns_text")
+    patterns: List[str] = []
+    if isinstance(patterns_text, str) and patterns_text.strip():
+        if enabled:
+            patterns = parse_word_cleanup_patterns(patterns_text)
+        else:
+            try:
+                patterns = parse_word_cleanup_patterns(patterns_text)
+            except ValueError:
+                patterns = []
+
+    cfg["word_cleanup"] = {
+        "enabled": enabled,
+        "patterns": patterns,
+        "replacement": WORD_CLEANUP_REPLACEMENT,
+    }
+
+
+def _word_cleanup_result_summary(result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(result, dict):
+        return {}
+    body = result.get("body") if isinstance(result.get("body"), dict) else None
+    whole = body.get("whole") if isinstance(body, dict) and isinstance(body.get("whole"), dict) else None
+    cleanup = whole.get("word_cleanup") if isinstance(whole, dict) and isinstance(whole.get("word_cleanup"), dict) else None
+    if not isinstance(cleanup, dict):
+        return {}
+    return {
+        "enabled": bool(cleanup.get("enabled")),
+        "pattern_count": len(cleanup.get("patterns") or []),
+        "gaps_modified": int(cleanup.get("gaps_modified") or 0),
+        "paragraphs_removed": int(cleanup.get("paragraphs_removed") or 0),
+        "line_breaks_removed": int(cleanup.get("line_breaks_removed") or 0),
+    }
+
+
+def _word_cleanup_batch_summary(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    summary = {
+        "enabled": False,
+        "pattern_count": 0,
+        "gaps_modified": 0,
+        "paragraphs_removed": 0,
+        "line_breaks_removed": 0,
+    }
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        result = item.get("result")
+        if not isinstance(result, dict):
+            continue
+        cur = _word_cleanup_result_summary(result)
+        if not cur:
+            continue
+        summary["enabled"] = summary["enabled"] or bool(cur.get("enabled"))
+        summary["pattern_count"] = max(summary["pattern_count"], int(cur.get("pattern_count") or 0))
+        for key in ("gaps_modified", "paragraphs_removed", "line_breaks_removed"):
+            summary[key] += int(cur.get(key) or 0)
+    return summary
 
 
 def _apply_request_summary(req: "ApplyRequest") -> Dict[str, Any]:
@@ -2299,6 +2381,10 @@ def start_apply_job(req: ApplyRequest, request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Background jobs currently require batch_files")
     if not req.apply_cover and not req.apply_body:
         raise HTTPException(status_code=400, detail="At least one of apply_cover or apply_body must be True")
+    try:
+        _merge_ui_word_cleanup({}, req.styles)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     requested_model = req.model
     effective_model = _force_configured_model(req)
     if requested_model and requested_model != effective_model:
@@ -2484,6 +2570,7 @@ def get_config(config_path: str = None) -> Dict[str, Any]:
             "body": style_overrides.get("Body", {}),
             "headings": style_overrides.get("Headings", {}),
             "footer": style_overrides.get("Footer", {}),
+            "word_cleanup": cfg.get("word_cleanup", {}),
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -3127,6 +3214,7 @@ def whole_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                         so_specials[name] = new
                 cfg["special_overrides"] = so_specials
             _merge_ui_style_overrides(cfg, req.styles)
+            _merge_ui_word_cleanup(cfg, req.styles)
         # Persist any changes coming from GUI (Body style, layout flags, etc.).
         save_config(cfg, req.config_path)
 
@@ -3448,6 +3536,7 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                     so["Footer"] = new_footer
                     cfg["style_overrides"] = so
             _merge_ui_style_overrides(cfg, req.styles)
+            _merge_ui_word_cleanup(cfg, req.styles)
         
         save_config(cfg, req.config_path)
         
@@ -3737,6 +3826,7 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                 resp["cancelled"] = True
             if report_error:
                 resp["report_error"] = report_error
+            word_cleanup_summary = _word_cleanup_batch_summary(results)
             download_meta = _build_download_meta(zip_path)
             if download_meta:
                 resp["download"] = download_meta
@@ -3750,6 +3840,7 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                 report=_file_ref(report_path),
                 download=resp.get("download"),
                 ai_cost=ai_totals,
+                word_cleanup=word_cleanup_summary,
                 report_error=report_error,
                 duration_ms=int((time.time() - t0) * 1000),
             )
@@ -3868,6 +3959,7 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
             pdf_output=_file_ref(result.get("pdf_output_path")),
             download=result.get("download"),
             ai_cost=ai_totals,
+            word_cleanup=_word_cleanup_result_summary(result),
             duration_ms=int((time.time() - t0) * 1000),
         )
         return result

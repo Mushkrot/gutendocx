@@ -1,6 +1,6 @@
 # GutenDocx - Implementation Status
 
-**Last updated:** 2026-05-26
+**Last updated:** 2026-06-07
 **Project path:** `/ai/gutendocx`
 **Production URL:** `https://gutendocx.unicloud.ca`
 
@@ -27,6 +27,7 @@ This project is not a public discovery/SEO site. It is intended for one client p
   - `output/audit_events.jsonl` for structured diagnostic audit events.
   - `output/ai_costs.jsonl` for best-effort estimated AI token/cost events.
 - Upload UX: the primary "Upload files" control is a normal multi-file `.docx` picker. Do not attach `webkitdirectory` to that control unless adding a separate, explicitly labeled folder-upload feature.
+- Word mark cleanup: the main UI has an optional `Clean parasite Word marks` body setting for `^p` / `^l` patterns. It is disabled by default and only cleans eligible blank/manual-line-break-only body gaps before style normalization.
 
 ## Production Baseline
 
@@ -55,6 +56,7 @@ This project is not a public discovery/SEO site. It is intended for one client p
 - `Uploads/` and `output/` can contain client manuscripts and generated files. Do not print, commit, or casually summarize their contents.
 - `output/audit_events.jsonl` should log user-action metadata, selected options, file names/sizes, timings, outputs, and errors, but not document text/content or credential headers.
 - Admin observability is metadata-only: `/admin/api/summary` aggregates persisted jobs, audit events, and AI cost events into activity/recent-error/audit-health summaries without reading document contents.
+- Word mark cleanup audit metadata records counts only: enabled state, pattern count, gaps modified, paragraphs removed, and manual line breaks removed.
 - `dev.sh` is development-only because it uses `--reload --host 0.0.0.0`.
 
 ## Current Documentation
@@ -91,6 +93,7 @@ These items are captured for future planning and should not be implemented witho
 
 ## Recent Changes
 
+- **2026-06-07:** Added managed parasite Word-mark cleanup for body processing. The UI now exposes `Clean parasite Word marks` under `Whole document -> Text styles`, accepts `^p` / `^l` patterns, and stores them under `word_cleanup` with fixed replacement `^p`. The cleanup pass runs before body/headings/`Para1` style passes, removes only eligible blank/manual-line-break-only body gaps, skips headings/TOC/protected/page-break/section-break/field/object paragraphs, and returns count-only metadata in `whole.word_cleanup` and audit summaries. Full pytest and UI script syntax checks passed; production was restarted and verified with localhost binding, local health, new UI/config availability, and Cloudflare Access redirect preserved.
 - **2026-05-26:** Improved logging analytics and admin observability without changing file processing. `/admin/api/summary` now includes read-only `activity` data from existing job/audit/cost metadata, `/admin` shows activity cards plus Recent Jobs, Recent Errors, and Audit Health, new audit events carry schema/source/operation/actor metadata, and new AI cost rows include better job/batch/input context where available. Added focused tests and restarted production after QA; localhost binding, local health, admin summary, and Cloudflare Access redirect were verified.
 - **2026-05-26:** Added low-risk observability cleanup: `/favicon.ico` now returns HTTP 204 to reduce audit-log 404 noise, and Web UI client error audit events include bounded error text plus structured `error_summary` fields for easier analysis of HTTP/Cloudflare failures. No document-processing behavior, model governance, retention cleanup, or production exposure was changed; production was restarted and verified with localhost binding, local health, favicon 204, and Cloudflare Access redirect preserved.
 - **2026-05-26:** Updated the deterministic body-formatting rule for manual line breaks per client request `Para1=>left`: non-heading body paragraphs containing a Word manual line break still get paragraph style `Para1`, while `Para1` and matching paragraphs are now left-aligned. Focused pytest coverage was updated to preserve heading and learned-heading exclusions; production was restarted and verified with localhost binding, local health, and Cloudflare Access redirect preserved.

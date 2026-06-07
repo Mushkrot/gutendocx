@@ -103,6 +103,7 @@
     .field { display: flex; flex-direction: column; gap: 6px; }
     .field label { min-width: unset; }
     .field input[type=text] { width: 340px; }
+    #wordCleanupPatterns { width: 100%; min-height: 96px; box-sizing: border-box; }
     .download-field { flex: 1; min-width: 260px; }
   </style>
 </head>
@@ -326,6 +327,16 @@
           </div>
           <div class="inline">
             <span id="docStylesInfo" class="hint"></span>
+          </div>
+        </div>
+        <div class="card" id="cardWordCleanup">
+          <div class="inline">
+            <label class="override"><input id="wordCleanupEnabled" type="checkbox" /> Clean parasite Word marks</label>
+            <span class="hint">Replacement: ^p</span>
+          </div>
+          <div class="field" style="margin-top:8px; max-width:620px;">
+            <label for="wordCleanupPatterns">Patterns</label>
+            <textarea id="wordCleanupPatterns" placeholder="^p^p&#10;^p^l^l^l^l"></textarea>
           </div>
         </div>
         <div class="card" id="cardBody">
@@ -647,6 +658,13 @@
         if (Object.keys(out).length) specialsOut[name] = out;
       }
       if (Object.keys(specialsOut).length) styles.specials = specialsOut;
+
+      const wordCleanupEnabled = document.getElementById('wordCleanupEnabled');
+      const wordCleanupPatterns = document.getElementById('wordCleanupPatterns');
+      styles.word_cleanup = {
+        enabled: !!(wordCleanupEnabled && wordCleanupEnabled.checked),
+        patterns_text: wordCleanupPatterns && wordCleanupPatterns.value ? wordCleanupPatterns.value : ''
+      };
 
       return styles;
     }
@@ -1363,6 +1381,19 @@
     $("scopeBody").addEventListener('change', updateScopeUI);
     updateScopeUI();
 
+    function updateWordCleanupUI() {
+      const enabled = !!(document.getElementById('wordCleanupEnabled') && document.getElementById('wordCleanupEnabled').checked);
+      const card = document.getElementById('cardWordCleanup');
+      const patterns = document.getElementById('wordCleanupPatterns');
+      if (card) card.classList.toggle('muted', !enabled);
+      if (patterns) patterns.disabled = !enabled;
+    }
+    const wordCleanupToggle = document.getElementById('wordCleanupEnabled');
+    if (wordCleanupToggle) {
+      wordCleanupToggle.addEventListener('change', updateWordCleanupUI);
+    }
+    updateWordCleanupUI();
+
     // Function to populate all font selects (called after fonts are loaded)
     function populateAllFontSelects() {
       populateFontSelect('titleFontSel','titleFamily');
@@ -1413,6 +1444,18 @@
         const footer = cfg.footer || {};
         if (footer.font_family) $('footerFamily').placeholder = footer.font_family;
         if (footer.size_pt) $('footerSize').placeholder = String(footer.size_pt);
+
+        const wordCleanup = cfg.word_cleanup || {};
+        const wordCleanupEnabled = document.getElementById('wordCleanupEnabled');
+        const wordCleanupPatterns = document.getElementById('wordCleanupPatterns');
+        if (wordCleanupEnabled) {
+          wordCleanupEnabled.checked = !!wordCleanup.enabled;
+        }
+        if (wordCleanupPatterns) {
+          const patterns = Array.isArray(wordCleanup.patterns) ? wordCleanup.patterns : [];
+          wordCleanupPatterns.value = patterns.join('\n');
+        }
+        updateWordCleanupUI();
         
       } catch (e) {
         console.warn('Failed to load config defaults:', e);
