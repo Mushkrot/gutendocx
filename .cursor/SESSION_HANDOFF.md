@@ -49,6 +49,7 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
   - full `./gutenberg/bin/python -m pytest gutendocx/tests -q` with 21 tests;
   - admin JS `node --check`;
   - direct `_activity_summary(days=30)` on live logs completed in about 1.5 seconds.
+- Production was restarted and verified: required services active, port `8000` still localhost-bound, local `/health` OK, local `/admin/api/summary?days=30` returns throughput, 10 slowest jobs, 46 download confirmations, and 1 audit warning on current logs, and public URL still redirects to Cloudflare Access.
 - `config.yaml` remains runtime/user state and should not be staged unless explicitly needed.
 
 2026-06-07 Word cleanup advisor/report UX:

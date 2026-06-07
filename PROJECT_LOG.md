@@ -28,6 +28,13 @@ Current iteration:
   - `./gutenberg/bin/python -m pytest gutendocx/tests -q` passed: 21 tests.
   - extracted admin script syntax checked with `node --check -`.
   - direct `_activity_summary(days=30)` on live logs completed in about 1.5 seconds and returned slowest jobs plus audit warnings.
+- Production service was restarted after the required pre-checks.
+- Post-restart verification:
+  - `gutendocx.service`, `cloudflared`, `server-firewall`, `tailscaled`, and `ssh` active;
+  - `127.0.0.1:8000` bind preserved;
+  - local `/health` OK;
+  - local `/admin/api/summary?days=30` returns throughput, 10 slowest jobs, 46 download confirmations, and 1 audit warning on current logs;
+  - public URL still redirects to Cloudflare Access login.
 
 **2026-06-07:** Extended parasite Word-mark cleanup with advisor/report UX.
 
