@@ -126,6 +126,12 @@
       <div class="metric"><div class="label">Failed / cancelled files</div><div id="metricProblemFiles" class="value">0</div></div>
       <div class="metric"><div class="label">Completed without AI cost</div><div id="metricNoAiFiles" class="value">0</div></div>
     </div>
+    <div class="grid">
+      <div class="metric"><div class="label">Downloads confirmed</div><div id="metricDownloads" class="value">0</div></div>
+      <div class="metric"><div class="label">Avg batch duration</div><div id="metricAvgBatch" class="value">0s</div></div>
+      <div class="metric"><div class="label">Avg seconds/file</div><div id="metricSecFile" class="value">0.0s</div></div>
+      <div class="metric"><div class="label">Audit warnings</div><div id="metricWarnings" class="value">0</div></div>
+    </div>
 
     <div class="two" style="margin-bottom:18px;">
       <section class="panel">
@@ -141,6 +147,7 @@
                 <th>Options</th>
                 <th>Status</th>
                 <th class="num">Duration</th>
+                <th class="num">Download</th>
                 <th class="num">AI cost</th>
               </tr>
             </thead>
@@ -230,6 +237,28 @@
       </div>
     </section>
 
+    <div class="two" style="margin-top:18px;">
+      <section class="panel">
+        <h2>Slowest Jobs</h2>
+        <div class="scroll" style="max-height:360px;">
+          <table>
+            <thead><tr><th>Time</th><th>Job / Batch</th><th class="num">Files</th><th class="num">Duration</th><th class="num">Sec/file</th><th>Options</th></tr></thead>
+            <tbody id="slowestRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Audit Warnings</h2>
+        <div class="scroll" style="max-height:360px;">
+          <table>
+            <thead><tr><th>Time</th><th>Job / Batch</th><th>Warning</th><th class="num">Files</th><th class="num">AI cost</th></tr></thead>
+            <tbody id="warningRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
     <section class="panel" style="margin-top:18px;">
       <h2>Audit Health</h2>
       <div class="scroll" style="max-height:320px;">
@@ -254,6 +283,10 @@
     };
     const timeFmt = (ts) => ts ? new Date(Number(ts) * 1000).toLocaleString() : "";
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const secondsFmt = (n) => {
+      n = Number(n || 0);
+      return n ? `${n.toFixed(n >= 10 ? 1 : 2)}s` : "";
+    };
     const durationFmt = (ms) => {
       ms = Number(ms || 0);
       if (!ms) return "";
@@ -304,10 +337,15 @@
       $("outputFiles").textContent = `${intFmt(output.files)} files`;
       const activity = data.activity || {};
       const activityTotals = activity.totals || {};
+      const throughput = activity.throughput || {};
       $("metricCompletedFiles").textContent = intFmt(activityTotals.files_completed);
       $("metricJobs").textContent = intFmt(activityTotals.jobs);
       $("metricProblemFiles").textContent = intFmt((activityTotals.files_failed || 0) + (activityTotals.files_cancelled || 0));
       $("metricNoAiFiles").textContent = intFmt(activityTotals.files_completed_without_ai_cost_events);
+      $("metricDownloads").textContent = intFmt(activityTotals.download_confirmed_jobs);
+      $("metricAvgBatch").textContent = durationFmt(throughput.avg_batch_duration_ms);
+      $("metricSecFile").textContent = secondsFmt(throughput.avg_seconds_per_file);
+      $("metricWarnings").textContent = intFmt(activityTotals.audit_warnings);
 
       const currentModel = data.model || "";
       const options = data.model_options || [];
@@ -339,11 +377,12 @@
             <td class="num"><div>${intFmt(files.completed || 0)} / ${intFmt(files.total || 0)}</div><div class="muted">${intFmt(files.failed || 0)} failed</div></td>
             <td>${esc(optionTags(r.options))}</td>
             <td>${esc(r.status || "")}${r.error ? `<div class="warning">${esc(r.error)}</div>` : ""}</td>
-            <td class="num">${esc(durationFmt(r.duration_ms))}</td>
+            <td class="num"><div>${esc(durationFmt(r.duration_ms))}</div><div class="muted">${esc(secondsFmt(r.seconds_per_file))}/file</div></td>
+            <td class="num">${r.download_confirmed ? "yes" : ""}</td>
             <td class="num">${money(r.ai_cost_usd)}</td>
           </tr>
         `;
-      }).join("") || `<tr><td colspan="8" class="muted">No jobs for this period.</td></tr>`;
+      }).join("") || `<tr><td colspan="9" class="muted">No jobs for this period.</td></tr>`;
 
       $("errorRows").innerHTML = (activity.recent_errors || []).map((r) => `
         <tr>
@@ -366,6 +405,34 @@
         </tr>
       `).join("") || `<tr><td colspan="5" class="muted">No model usage.</td></tr>`;
 
+      $("slowestRows").innerHTML = ((throughput.slowest_jobs || [])).map((r) => {
+        const files = r.files || {};
+        return `
+          <tr>
+            <td>${esc(timeFmt(r.ts))}</td>
+            <td><div class="mono">${esc(shortId(r.id))}</div><div class="muted mono">${esc(shortId(r.batch_id || ""))}</div></td>
+            <td class="num">${intFmt(files.total || 0)}</td>
+            <td class="num">${esc(durationFmt(r.duration_ms))}</td>
+            <td class="num">${esc(secondsFmt(r.seconds_per_file))}</td>
+            <td>${esc(optionTags(r.options))}</td>
+          </tr>
+        `;
+      }).join("") || `<tr><td colspan="6" class="muted">No completed jobs with duration for this period.</td></tr>`;
+
+      $("warningRows").innerHTML = (activity.audit_warnings || []).map((r) => {
+        const files = r.files || {};
+        const warning = ((r.warnings || [])[0] || {});
+        return `
+          <tr>
+            <td>${esc(timeFmt(r.ts))}</td>
+            <td><div class="mono">${esc(shortId(r.job_id))}</div><div class="muted mono">${esc(shortId(r.batch_id || ""))}</div></td>
+            <td>${esc(warning.type || "")}<div class="muted">${esc(warning.message || "")}</div></td>
+            <td class="num">${intFmt(files.total || 0)}</td>
+            <td class="num">${money(r.ai_cost_usd)}</td>
+          </tr>
+        `;
+      }).join("") || `<tr><td colspan="5" class="muted">No audit warnings for this period.</td></tr>`;
+
       const health = activity.audit_health || {};
       const audit = health.audit_events || {};
       const aiCosts = health.ai_costs || {};
@@ -376,6 +443,7 @@
         `<tr><td>ai_costs.jsonl</td><td class="num">${intFmt(aiCosts.lines)}</td><td class="num">${intFmt(aiCosts.valid)}</td><td class="num">${intFmt(aiCosts.invalid)}</td><td>${esc(range(aiCosts))}</td></tr>`,
         `<tr><td>jobs</td><td class="num">${intFmt(jobs.files)}</td><td class="num">${intFmt((jobs.files || 0) - (jobs.invalid_files || 0))}</td><td class="num">${intFmt(jobs.invalid_files)}</td><td>${intFmt(jobs.missing_final_status)} jobs with unexpected status</td></tr>`,
         `<tr><td>AI cost context</td><td class="num">${intFmt(health.cost_events_missing_context)}</td><td class="num"></td><td class="num"></td><td>cost events missing job, batch, and input references</td></tr>`,
+        `<tr><td>Audit warnings</td><td class="num">${intFmt(health.audit_warnings)}</td><td class="num"></td><td class="num"></td><td>review warning table when nonzero</td></tr>`,
       ].join("");
     }
 

@@ -8,6 +8,27 @@
 
 ## Current Session - Resume Point
 
+**2026-06-07:** Tightened audit logging signal and admin operational metrics.
+
+Current iteration:
+
+- Reduced polling noise in `output/audit_events.jsonl`:
+  - `GET /jobs/{job_id}` now logs `job.checked` only on first poll, state/progress changes, or every `GUTENDOCX_POLL_AUDIT_EVERY` polls (default `10`);
+  - `/events/client` now accepts every `client.apply_job_polled` event but only writes the first/state-change/sample events to JSONL.
+- Added download confirmation analytics by linking `client.download_clicked` events to job/batch summaries.
+- Extended `/admin/api/summary` with throughput:
+  - average batch duration;
+  - average seconds per file;
+  - slowest jobs for the selected period.
+- Added audit warning detection for completed cover+vision jobs with zero recorded AI cost, both as read-only admin summary warnings for existing jobs and as future best-effort `apply.audit_warning` events.
+- Updated `/admin` with Downloads confirmed, Avg batch duration, Avg seconds/file, Audit warnings, Slowest Jobs, and Audit Warnings panels.
+- This is logging/admin observability only; no DOCX/PDF processing, TOC, LibreOffice, AI prompts, model choice, or cleanup behavior was changed.
+- Verification:
+  - `./gutenberg/bin/python -m py_compile gutendocx/web/server.py gutendocx/tests/test_admin_activity_summary.py`
+  - `./gutenberg/bin/python -m pytest gutendocx/tests -q` passed: 21 tests.
+  - extracted admin script syntax checked with `node --check -`.
+  - direct `_activity_summary(days=30)` on live logs completed in about 1.5 seconds and returned slowest jobs plus audit warnings.
+
 **2026-06-07:** Extended parasite Word-mark cleanup with advisor/report UX.
 
 Current iteration:

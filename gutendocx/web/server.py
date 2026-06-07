@@ -107,6 +107,8 @@ SCHEDULED_CLEANUP_ENABLED = os.environ.get("GUTENDOCX_SCHEDULED_CLEANUP", "1").s
 }
 SCHEDULED_CLEANUP_INTERVAL_SECONDS = _env_int("GUTENDOCX_CLEANUP_INTERVAL_SECONDS", 24 * 60 * 60, 60)
 SCHEDULED_CLEANUP_INITIAL_DELAY_SECONDS = _env_int("GUTENDOCX_CLEANUP_INITIAL_DELAY_SECONDS", 60, 0)
+POLL_AUDIT_EVERY = _env_int("GUTENDOCX_POLL_AUDIT_EVERY", 10, 1)
+POLL_AUDIT_STATE_MAX = _env_int("GUTENDOCX_POLL_AUDIT_STATE_MAX", 1000, 100)
 
 
 AI_PRICES_PER_1M = {
@@ -642,6 +644,7 @@ JOB_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="gutendocx-j
 JOB_LOCK = threading.RLock()
 JOB_INDEX: Dict[str, Dict[str, Any]] = {}
 JOB_CONTEXT = threading.local()
+POLL_AUDIT_STATE: Dict[str, Dict[str, Any]] = {}
 
 
 def _now_ms() -> int:
@@ -2119,6 +2122,128 @@ def _job_duration_ms(job: Dict[str, Any]) -> Optional[int]:
     return None
 
 
+def _download_batch_id(row: Dict[str, Any]) -> Optional[str]:
+    data = row.get("data") if isinstance(row.get("data"), dict) else {}
+    batch = data.get("batch")
+    if isinstance(batch, dict):
+        value = batch.get("batch_id") or batch.get("id")
+        if value:
+            return str(value)
+    for key in ("batch_id", "batchId"):
+        if data.get(key):
+            return str(data.get(key))
+    download = data.get("download")
+    if isinstance(download, dict):
+        url = download.get("url")
+        if isinstance(url, str):
+            name = os.path.basename(url)
+            if name.endswith(".zip"):
+                return name[:-4]
+    return None
+
+
+def _job_seconds_per_file(job: Dict[str, Any], counts: Optional[Dict[str, int]] = None) -> Optional[float]:
+    duration_ms = _job_duration_ms(job)
+    if duration_ms is None:
+        return None
+    counts = counts or _job_file_counts(job)
+    files = _as_int(counts.get("total") if isinstance(counts, dict) else None, 0)
+    if files <= 0:
+        return None
+    return float(duration_ms) / 1000.0 / float(files)
+
+
+def _poll_signature(status: Any, progress: Any) -> Dict[str, Any]:
+    progress = progress if isinstance(progress, dict) else {}
+    return {
+        "status": status,
+        "total": progress.get("total"),
+        "processed": progress.get("processed"),
+        "succeeded": progress.get("succeeded"),
+        "failed": progress.get("failed"),
+        "ready": progress.get("ready"),
+    }
+
+
+def _should_audit_poll_event(
+    source: str,
+    job_id: Optional[str],
+    status: Any,
+    progress: Any,
+    attempt: Optional[Any] = None,
+) -> Optional[Dict[str, Any]]:
+    if not job_id:
+        return {"poll_audit_reason": "missing_job_id", "poll_sample_every": POLL_AUDIT_EVERY}
+    key = f"{source}:{job_id}"
+    signature = _poll_signature(status, progress)
+    try:
+        attempt_int = int(attempt) if attempt is not None else None
+    except Exception:
+        attempt_int = None
+
+    with JOB_LOCK:
+        if len(POLL_AUDIT_STATE) > POLL_AUDIT_STATE_MAX:
+            for old_key in list(POLL_AUDIT_STATE.keys())[:100]:
+                if old_key != key:
+                    POLL_AUDIT_STATE.pop(old_key, None)
+        rec = POLL_AUDIT_STATE.setdefault(key, {"count": 0})
+        rec["count"] = int(rec.get("count") or 0) + 1
+        count = int(rec["count"])
+        last_signature = rec.get("signature")
+        reason = None
+        if last_signature is None:
+            reason = "first"
+        elif last_signature != signature:
+            reason = "state_changed"
+        elif attempt_int is not None and attempt_int > 0 and attempt_int % POLL_AUDIT_EVERY == 0:
+            reason = f"sample_{POLL_AUDIT_EVERY}"
+        elif attempt_int is None and count % POLL_AUDIT_EVERY == 0:
+            reason = f"sample_{POLL_AUDIT_EVERY}"
+        if not reason:
+            return None
+        rec["signature"] = signature
+        return {
+            "poll_count": count,
+            "poll_audit_reason": reason,
+            "poll_sample_every": POLL_AUDIT_EVERY,
+        }
+
+
+def _audit_cover_without_ai_cost_warning(
+    req: "ApplyRequest",
+    request: Optional[Request],
+    ai_totals: Dict[str, Any],
+    batch_count: int = 0,
+) -> None:
+    try:
+        if not (bool(req.apply_cover) and bool(req.vision)):
+            return
+        total_tokens = _as_int(ai_totals.get("total_tokens"), 0) if isinstance(ai_totals, dict) else 0
+        total_usd = _as_float(ai_totals.get("total_usd"), 0.0) if isinstance(ai_totals, dict) else 0.0
+        if total_tokens > 0 or total_usd > 0:
+            return
+        _audit_event(
+            "apply.audit_warning",
+            request,
+            warning_type="cover_without_ai_cost",
+            message="apply_cover and vision were enabled, but no AI usage/cost was recorded",
+            job_id=_current_job_id(),
+            batch_id=req.batch_id,
+            batch_count=batch_count,
+            input=_file_ref(req.input),
+            options={
+                "apply_cover": bool(req.apply_cover),
+                "apply_body": bool(req.apply_body),
+                "vision": bool(req.vision),
+                "update_toc": bool(req.update_toc),
+                "toc_mode": req.toc_mode,
+            },
+            ai_cost=ai_totals,
+        )
+    except Exception:
+        pass
+
+
 def _event_is_error(row: Dict[str, Any]) -> bool:
     event = str(row.get("event") or "")
     if event.endswith((".error", ".failed")) or ".error" in event:
@@ -2155,11 +2280,24 @@ def _activity_summary(days: int = 30, recent_limit: int = 50, error_limit: int =
     cost_rows = [r for r in _iter_jsonl(AI_COSTS_JSONL) if _as_int(r.get("ts"), 0) >= cutoff]
 
     job_actor: Dict[str, str] = {}
+    batch_actor: Dict[str, str] = {}
+    download_by_batch: Dict[str, Dict[str, Any]] = {}
     for row in audit_rows:
         job_id = row.get("job_id")
+        batch_id = row.get("batch_id")
         email = row.get("cf_access_user") or row.get("actor_email")
         if job_id and email and str(job_id) not in job_actor:
             job_actor[str(job_id)] = str(email)
+        if batch_id and email and str(batch_id) not in batch_actor:
+            batch_actor[str(batch_id)] = str(email)
+        if row.get("event") == "client.download_clicked":
+            dl_batch = _download_batch_id(row)
+            if dl_batch:
+                download_by_batch[str(dl_batch)] = {
+                    "confirmed": True,
+                    "ts": _ms_to_ts(row.get("ts_ms")) or _ms_to_ts(row.get("ts")),
+                    "actor_email": email,
+                }
 
     cost_by_job: Dict[str, float] = {}
     cost_by_batch: Dict[str, float] = {}
@@ -2190,6 +2328,17 @@ def _activity_summary(days: int = 30, recent_limit: int = 50, error_limit: int =
         "ai_cost_usd": sum(_as_float(r.get("cost_usd"), 0.0) for r in cost_rows),
         "files_with_ai_cost_events": len(ai_input_paths),
         "files_completed_without_ai_cost_events": 0,
+        "download_confirmed_jobs": 0,
+        "download_pending_jobs": 0,
+        "audit_warnings": 0,
+    }
+    throughput = {
+        "jobs_with_duration": 0,
+        "files_with_duration": 0,
+        "total_duration_ms": 0,
+        "avg_batch_duration_ms": None,
+        "avg_seconds_per_file": None,
+        "slowest_jobs": [],
     }
     by_status: Dict[str, int] = {}
     option_counts = {
@@ -2209,6 +2358,8 @@ def _activity_summary(days: int = 30, recent_limit: int = 50, error_limit: int =
         options = _job_options(job)
         counts = _job_file_counts(job)
         status = str(job.get("status") or "unknown")
+        duration_ms = _job_duration_ms(job)
+        seconds_per_file = _job_seconds_per_file(job, counts)
         by_status[status] = by_status.get(status, 0) + 1
         totals["jobs"] += 1
         totals["files_total"] += counts["total"]
@@ -2229,28 +2380,63 @@ def _activity_summary(days: int = 30, recent_limit: int = 50, error_limit: int =
             cost_usd = cost_by_job.get(job_id, 0.0)
         if not cost_usd and batch_id:
             cost_usd = cost_by_batch.get(batch_id, 0.0)
+        download_info = download_by_batch.get(str(batch_id)) if batch_id else None
+        download_confirmed = bool(download_info)
+        if status == "completed":
+            if download_confirmed:
+                totals["download_confirmed_jobs"] += 1
+            elif job.get("download"):
+                totals["download_pending_jobs"] += 1
+        warning_items: List[Dict[str, Any]] = []
+        if (
+            status == "completed"
+            and bool(options.get("apply_cover"))
+            and bool(options.get("vision", True))
+            and _as_int(counts.get("total"), 0) > 0
+            and cost_usd <= 0
+        ):
+            warning_items.append(
+                {
+                    "type": "cover_without_ai_cost",
+                    "message": "Cover processing was enabled, but no AI cost was recorded.",
+                }
+            )
+        totals["audit_warnings"] += len(warning_items)
+        if duration_ms is not None:
+            throughput["jobs_with_duration"] += 1
+            throughput["files_with_duration"] += counts["total"]
+            throughput["total_duration_ms"] += duration_ms
+        job_row = {
+            "id": job_id,
+            "ts": ts,
+            "batch_id": batch_id,
+            "actor_email": job_actor.get(job_id) or (batch_actor.get(str(batch_id)) if batch_id else None),
+            "status": status,
+            "type": job.get("type"),
+            "duration_ms": duration_ms,
+            "seconds_per_file": seconds_per_file,
+            "files": counts,
+            "options": options,
+            "ai_cost_usd": cost_usd,
+            "download": job.get("download"),
+            "download_confirmed": download_confirmed,
+            "download_confirmed_ts": (download_info or {}).get("ts") if isinstance(download_info, dict) else None,
+            "warnings": warning_items,
+            "error_type": job.get("error_type"),
+            "error": _bounded_str(job.get("error"), 240),
+        }
         recent_jobs.append(
-            {
-                "id": job_id,
-                "ts": ts,
-                "batch_id": batch_id,
-                "actor_email": job_actor.get(job_id),
-                "status": status,
-                "type": job.get("type"),
-                "duration_ms": _job_duration_ms(job),
-                "files": counts,
-                "options": options,
-                "ai_cost_usd": cost_usd,
-                "download": job.get("download"),
-                "error_type": job.get("error_type"),
-                "error": _bounded_str(job.get("error"), 240),
-            }
+            job_row
         )
 
     totals["files_completed_without_ai_cost_events"] = max(
         0,
         int(totals["files_completed"]) - int(totals["files_with_ai_cost_events"]),
     )
+    if throughput["jobs_with_duration"]:
+        throughput["avg_batch_duration_ms"] = float(throughput["total_duration_ms"]) / float(throughput["jobs_with_duration"])
+    if throughput["files_with_duration"]:
+        throughput["avg_seconds_per_file"] = float(throughput["total_duration_ms"]) / 1000.0 / float(throughput["files_with_duration"])
 
     recent_errors: List[Dict[str, Any]] = []
     for row in audit_rows:
@@ -2276,6 +2462,42 @@ def _activity_summary(days: int = 30, recent_limit: int = 50, error_limit: int =
             }
         )
 
+    audit_warnings = [
+        {
+            "ts": row.get("ts"),
+            "job_id": row.get("id"),
+            "batch_id": row.get("batch_id"),
+            "actor_email": row.get("actor_email"),
+            "warnings": row.get("warnings"),
+            "status": row.get("status"),
+            "files": row.get("files"),
+            "options": row.get("options"),
+            "ai_cost_usd": row.get("ai_cost_usd"),
+        }
+        for row in recent_jobs
+        if row.get("warnings")
+    ]
+    throughput["slowest_jobs"] = sorted(
+        [
+            {
+                "id": row.get("id"),
+                "ts": row.get("ts"),
+                "batch_id": row.get("batch_id"),
+                "actor_email": row.get("actor_email"),
+                "status": row.get("status"),
+                "duration_ms": row.get("duration_ms"),
+                "seconds_per_file": row.get("seconds_per_file"),
+                "files": row.get("files"),
+                "options": row.get("options"),
+                "download_confirmed": row.get("download_confirmed"),
+            }
+            for row in recent_jobs
+            if row.get("duration_ms") is not None
+        ],
+        key=lambda r: float(r.get("duration_ms") or 0),
+        reverse=True,
+    )[:10]
+
     terminal = {"completed", "failed", "cancelled", "interrupted"}
     audit_health = {
         "audit_events": _jsonl_health(AUDIT_EVENTS_JSONL),
@@ -2298,6 +2520,7 @@ def _activity_summary(days: int = 30, recent_limit: int = 50, error_limit: int =
                 if not (r.get("job_id") or r.get("batch_id") or r.get("input_path"))
             ]
         ),
+        "audit_warnings": len(audit_warnings),
     }
 
     return {
@@ -2305,11 +2528,13 @@ def _activity_summary(days: int = 30, recent_limit: int = 50, error_limit: int =
         "days": days,
         "cutoff_ts": cutoff,
         "totals": totals,
+        "throughput": throughput,
         "by_status": by_status,
         "option_counts": option_counts,
         "by_toc_mode": by_toc_mode,
         "recent_jobs": sorted(recent_jobs, key=lambda r: int(r.get("ts") or 0), reverse=True)[: max(1, int(recent_limit or 50))],
         "recent_errors": sorted(recent_errors, key=lambda r: int(r.get("ts") or 0), reverse=True)[: max(1, int(error_limit or 50))],
+        "audit_warnings": sorted(audit_warnings, key=lambda r: int(r.get("ts") or 0), reverse=True)[: max(1, int(error_limit or 50))],
         "audit_health": audit_health,
     }
 
@@ -2460,13 +2685,16 @@ def get_job(job_id: str, request: Request) -> Dict[str, Any]:
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         public = _job_public(job)
-    _audit_event(
-        "job.checked",
-        request,
-        job_id=job_id,
-        status=public.get("status"),
-        progress=public.get("progress"),
-    )
+    poll_meta = _should_audit_poll_event("server", job_id, public.get("status"), public.get("progress"))
+    if poll_meta:
+        _audit_event(
+            "job.checked",
+            request,
+            job_id=job_id,
+            status=public.get("status"),
+            progress=public.get("progress"),
+            **poll_meta,
+        )
     return {"job": public}
 
 
@@ -2539,12 +2767,30 @@ def retry_failed_job(job_id: str, request: Request) -> Dict[str, Any]:
 @app.post("/events/client")
 def client_audit_event(req: ClientAuditEventRequest, request: Request) -> Dict[str, Any]:
     data = req.data if isinstance(req.data, dict) else {}
+    event_name = "client." + re.sub(r"[^a-zA-Z0-9_.:-]+", "_", str(req.event or "event"))[:100]
+    if event_name == "client.apply_job_polled":
+        poll_meta = _should_audit_poll_event(
+            "client",
+            data.get("job_id"),
+            data.get("status"),
+            data.get("progress"),
+            data.get("attempt"),
+        )
+        if not poll_meta:
+            return {"ok": True, "logged": False, "reason": "poll_throttled"}
+        _audit_event(
+            event_name,
+            request,
+            data=data,
+            **poll_meta,
+        )
+        return {"ok": True, "logged": True}
     _audit_event(
-        "client." + re.sub(r"[^a-zA-Z0-9_.:-]+", "_", str(req.event or "event"))[:100],
+        event_name,
         request,
         data=data,
     )
-    return {"ok": True}
+    return {"ok": True, "logged": True}
 
 
 @app.get("/health")
@@ -3877,6 +4123,7 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
             download_meta = _build_download_meta(zip_path)
             if download_meta:
                 resp["download"] = download_meta
+            _audit_cover_without_ai_cost_warning(req, request, ai_totals, batch_count=len(batch_files))
             _audit_event(
                 "apply.completed",
                 request,
@@ -3997,6 +4244,7 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                 result["download"] = download_meta
 
         result["ai_cost"] = ai_totals
+        _audit_cover_without_ai_cost_warning(req, request, ai_totals, batch_count=1)
         _audit_event(
             "apply.completed",
             request,
@@ -4240,6 +4488,7 @@ def cover_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
             download_meta = _build_download_meta(zip_path)
             if download_meta:
                 resp["download"] = download_meta
+            _audit_cover_without_ai_cost_warning(req, request, ai_totals, batch_count=len(batch_files))
             _audit_event(
                 "cover_apply.completed",
                 request,
@@ -4275,6 +4524,7 @@ def cover_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
         download_meta = _build_download_meta(res.get("output_path"))
         if download_meta:
             res["download"] = download_meta
+        _audit_cover_without_ai_cost_warning(req, request, ai_totals, batch_count=1)
         _audit_event(
             "cover_apply.completed",
             request,

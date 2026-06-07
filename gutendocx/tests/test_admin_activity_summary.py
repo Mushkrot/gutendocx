@@ -68,6 +68,12 @@ def test_activity_summary_counts_jobs_files_costs_and_errors(tmp_path, monkeypat
                 "error_type": "ValueError",
                 "error": "sample failure",
             },
+            {
+                "ts": now - 15,
+                "event": "client.download_clicked",
+                "cf_access_user": "client@example.com",
+                "data": {"batch": {"batch_id": batch_id}},
+            },
             "__INVALID__",
         ],
     )
@@ -101,11 +107,18 @@ def test_activity_summary_counts_jobs_files_costs_and_errors(tmp_path, monkeypat
     assert summary["totals"]["ai_calls"] == 1
     assert summary["totals"]["files_with_ai_cost_events"] == 1
     assert summary["totals"]["files_completed_without_ai_cost_events"] == 1
+    assert summary["totals"]["download_confirmed_jobs"] == 1
+    assert summary["totals"]["download_pending_jobs"] == 0
     assert summary["option_counts"]["apply_body"] == 1
     assert summary["option_counts"]["update_toc"] == 1
     assert summary["by_toc_mode"]["structured"] == 1
     assert summary["recent_jobs"][0]["actor_email"] == "client@example.com"
     assert summary["recent_jobs"][0]["duration_ms"] == 45_000
+    assert summary["recent_jobs"][0]["seconds_per_file"] == 15.0
+    assert summary["recent_jobs"][0]["download_confirmed"] is True
+    assert summary["throughput"]["avg_batch_duration_ms"] == 45_000
+    assert summary["throughput"]["avg_seconds_per_file"] == 15.0
+    assert summary["throughput"]["slowest_jobs"][0]["id"] == job_id
     assert summary["recent_errors"][0]["summary"] == "sample failure"
     assert summary["audit_health"]["audit_events"]["invalid"] == 1
 
@@ -147,3 +160,88 @@ def test_ai_usage_cost_event_includes_context(tmp_path, monkeypatch):
     assert row["kind"] == "cover_vision"
     assert row["total_tokens"] == 1100
     assert totals["total_tokens"] == 1100
+
+
+def test_poll_audit_throttles_unchanged_poll_events(monkeypatch):
+    server.POLL_AUDIT_STATE.clear()
+    monkeypatch.setattr(server, "POLL_AUDIT_EVERY", 3)
+    progress = {"total": 10, "processed": 1, "succeeded": 1, "failed": 0}
+
+    first = server._should_audit_poll_event("client", "job_poll", "running", progress, attempt=1)
+    second = server._should_audit_poll_event("client", "job_poll", "running", progress, attempt=2)
+    sampled = server._should_audit_poll_event("client", "job_poll", "running", progress, attempt=3)
+    changed = server._should_audit_poll_event(
+        "client",
+        "job_poll",
+        "running",
+        {"total": 10, "processed": 2, "succeeded": 2, "failed": 0},
+        attempt=4,
+    )
+
+    assert first["poll_audit_reason"] == "first"
+    assert second is None
+    assert sampled["poll_audit_reason"] == "sample_3"
+    assert changed["poll_audit_reason"] == "state_changed"
+
+
+def test_cover_without_ai_cost_warning_is_best_effort_audit_event(tmp_path, monkeypatch):
+    audit_path = tmp_path / "audit_events.jsonl"
+    monkeypatch.setattr(server, "AUDIT_EVENTS_JSONL", str(audit_path))
+    req = server.ApplyRequest(
+        input="Uploads/batch_warn/a.docx",
+        batch_id="batch_warn",
+        apply_body=True,
+        apply_cover=True,
+        vision=True,
+    )
+
+    server._audit_cover_without_ai_cost_warning(req, None, server._new_ai_totals(), batch_count=1)
+
+    row = json.loads(audit_path.read_text(encoding="utf-8").strip())
+    assert row["event"] == "apply.audit_warning"
+    assert row["warning_type"] == "cover_without_ai_cost"
+    assert row["batch_id"] == "batch_warn"
+    assert row["options"]["apply_cover"] is True
+
+
+def test_activity_summary_flags_cover_jobs_without_ai_cost(tmp_path, monkeypatch):
+    audit_path = tmp_path / "audit_events.jsonl"
+    costs_path = tmp_path / "ai_costs.jsonl"
+    jobs_dir = tmp_path / "jobs"
+    jobs_dir.mkdir()
+    now = int(time.time())
+    job = {
+        "id": "job_warn",
+        "type": "apply",
+        "status": "completed",
+        "created_at": (now - 30) * 1000,
+        "started_at": (now - 25) * 1000,
+        "finished_at": (now - 10) * 1000,
+        "request_summary": {
+            "batch_id": "batch_warn",
+            "batch_count": 1,
+            "options": {
+                "apply_body": True,
+                "apply_cover": True,
+                "vision": True,
+                "update_toc": True,
+                "toc_mode": "structured",
+            },
+        },
+        "files": [{"name": "a.docx", "path": "Uploads/batch_warn/a.docx", "status": "completed"}],
+        "ai_cost": {"total_usd": 0.0, "total_tokens": 0},
+        "download": {"url": "/output/batch_warn.zip"},
+    }
+    (jobs_dir / "job_warn.json").write_text(json.dumps(job), encoding="utf-8")
+    _write_jsonl(audit_path, [{"ts": now - 25, "event": "job.apply.created", "job_id": "job_warn", "cf_access_user": "client@example.com"}])
+    _write_jsonl(costs_path, [])
+    monkeypatch.setattr(server, "AUDIT_EVENTS_JSONL", str(audit_path))
+    monkeypatch.setattr(server, "AI_COSTS_JSONL", str(costs_path))
+    monkeypatch.setattr(server, "JOBS_DIR", str(jobs_dir))
+
+    summary = server._activity_summary(days=30)
+
+    assert summary["totals"]["audit_warnings"] == 1
+    assert summary["audit_health"]["audit_warnings"] == 1
+    assert summary["audit_warnings"][0]["job_id"] == "job_warn"
+    assert summary["recent_jobs"][0]["warnings"][0]["type"] == "cover_without_ai_cost"

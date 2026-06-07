@@ -34,6 +34,23 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 
 ## Recent Audit
 
+2026-06-07 polling/throughput/download observability:
+
+- Reduced audit-log noise from polling:
+  - server `job.checked` is now logged only on first poll, status/progress changes, or every `GUTENDOCX_POLL_AUDIT_EVERY` polls (`10` by default);
+  - client `apply_job_polled` events are still accepted, but unchanged intermediate polls return `logged: false` and are not written to JSONL.
+- Admin summary now links `client.download_clicked` events to jobs/batches and reports download confirmation.
+- Admin summary now reports throughput: average batch duration, average seconds per file, and slowest jobs for the selected period.
+- Admin summary and future audit events now flag cover+vision jobs with zero AI usage/cost as `cover_without_ai_cost` warnings.
+- `/admin` now shows Downloads confirmed, Avg batch duration, Avg seconds/file, Audit warnings, Slowest Jobs, and Audit Warnings.
+- No file-processing behavior was changed: DOCX/PDF output, TOC, LibreOffice, AI prompts, model governance, cleanup behavior, and AI-call conditions are untouched.
+- Verification passed:
+  - py_compile for `server.py` and admin activity tests;
+  - full `./gutenberg/bin/python -m pytest gutendocx/tests -q` with 21 tests;
+  - admin JS `node --check`;
+  - direct `_activity_summary(days=30)` on live logs completed in about 1.5 seconds.
+- `config.yaml` remains runtime/user state and should not be staged unless explicitly needed.
+
 2026-06-07 Word cleanup advisor/report UX:
 
 - Manual `Clean parasite Word marks` remains available under `Whole document -> Text styles`.
