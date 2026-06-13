@@ -29,7 +29,10 @@ Current iteration:
   - safety commit before this work: `9aae156` (`Fix cover roles and footer page number styling`), excluding runtime `config.yaml`;
   - `./gutenberg/bin/python -m pytest gutendocx/tests -q` passed with 30 tests;
   - extracted Web UI script passed `node --check -`.
-- Host-mode LibreOffice (`use_docker=false`) only performs `--convert-to docx` in this app path, so PDF/ZIP/index-update acceptance is verified through the production Docker/UNO endpoint path after restart.
+- Production endpoint QA after restart:
+  - `pg61492.docx` via live `/apply`: DOCX, PDF, and ZIP were created; table bad `0`, hyperlink bad `0`, TOC bad `0`, with 26 visible TOC runs and field instruction preserved;
+  - `pg61506.docx` via live `/apply`: DOCX, PDF, and ZIP were created; hyperlink bad `0`, TOC bad `0`, with 24 visible TOC runs and field instruction preserved.
+- Host-mode LibreOffice (`use_docker=false`) only performs `--convert-to docx` in this app path, so full PDF/ZIP/index-update acceptance was verified through the production Docker/UNO endpoint path after restart.
 - Runtime `config.yaml` remains user/platform state and must not be staged unless explicitly requested.
 
 **2026-06-12:** Fixed cover role and page-number style override regressions.

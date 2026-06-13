@@ -50,9 +50,10 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
   - baseline on the attached files with target Body `Aptos 10` and TOC `Georgia 9`: `pg61492` table `164/164` bad, hyperlink `41/41` bad, TOC `52/52` bad; `pg61506` hyperlink `40/40` bad, TOC `46/46` bad;
   - after core repair, table/hyperlink bad counts are `0`;
   - existing-source TOC repair on copied attachments reduces TOC bad counts to `0` and preserves field instructions;
+  - production endpoint QA after restart passed on both attached files: live `/apply` created DOCX/PDF/ZIP, `pg61492` table/hyperlink/TOC bad counts were `0`, and `pg61506` hyperlink/TOC bad counts were `0`;
   - full pytest currently passes with 30 tests, and extracted Web UI JS passes `node --check -`.
 - Caveat:
-  - host-mode LibreOffice in this app uses `--convert-to docx`, so final PDF/ZIP and real TOC index-update acceptance is verified via the production Docker/UNO endpoint path after service restart.
+  - host-mode LibreOffice in this app uses `--convert-to docx`; final PDF/ZIP and real TOC index-update acceptance was verified via the production Docker/UNO endpoint path after service restart.
 - `config.yaml` is still runtime/user state and must remain unstaged unless explicitly requested.
 
 2026-06-12 cover/page-number style override regressions:
