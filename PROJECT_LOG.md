@@ -8,6 +8,33 @@
 
 ## Current Session - Resume Point
 
+**2026-06-12:** Fixed cover role and page-number style override regressions.
+
+Current iteration:
+
+- Investigated the client's 2026-06-09 apply jobs from `output/audit_events.jsonl` and `output/jobs/*.json`.
+  - Candidate source batches: `batch_1780990060` (`pg1112`-`pg1124`), `batch_1780996526` (`pg1125`), and `batch_1780996834` (`pg1126`-`pg1137`).
+  - All used cover/body/vision/TOC apply with `Title 24`, `Subtitle 18`, `Author 18`, and `Footer 11` style settings.
+- Baseline QA on existing client outputs confirmed:
+  - `pg1125`, `pg1128`, and `pg1133`-`pg1137` had `Cover Author` paragraphs with direct `24pt`/bold run formatting overriding the intended `Cover Author` style;
+  - all 26 final DOCX files had PAGE fields in footers without explicit page-number font/size/bold/italic formatting.
+- Fixed cover style application:
+  - `Cover Title`, `Cover Subtitle`, and `Cover Author` now all clear direct run formatting by default when the role style is applied;
+  - this prevents source direct formatting such as `24pt`/bold from winning over the configured cover style.
+- Fixed page-number style durability:
+  - PAGE fields are now created with explicitly styled field/result runs;
+  - final DOCX files are repaired after LibreOffice round-trip so footer PAGE fields retain configured page-number styling before ZIP/download packaging;
+  - the UI now sends explicit `bold: false` and `italic: false` for unchecked Page Number override flags and uses visible effective footer family/size values when override is enabled.
+- Added focused regression tests for cover role direct-format cleanup and footer PAGE-field styling/repair.
+- Verification:
+  - baseline QA before change: `BASELINE_COVER_BAD_COUNT 7`, `BASELINE_FOOTER_BAD_COUNT 26 OF 26`, and deterministic `pg1125` author run retained `24.0`/bold;
+  - after-QA on the same real files: deterministic cover bad count `0`, footer repair bad count `0 OF 26`;
+  - `./gutenberg/bin/python -m py_compile gutendocx/core/cover.py gutendocx/core/layout.py gutendocx/web/server.py gutendocx/tests/test_cover_footer_style_regressions.py`;
+  - `./gutenberg/bin/python -m pytest gutendocx/tests -q` passed: 25 tests;
+  - extracted Web UI script syntax checked with `node --check -`.
+- No production service restart was performed yet.
+- Runtime `config.yaml` remains user/platform state and was not intentionally edited.
+
 **2026-06-07:** Tightened audit logging signal and admin operational metrics.
 
 Current iteration:

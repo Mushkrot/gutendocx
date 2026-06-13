@@ -40,6 +40,49 @@ def _clear_footer(footer):
         footer_element.remove(child)
 
 
+def _set_rpr_bool(rpr, tag: str, value: bool) -> None:
+    node = rpr.find(qn(f"w:{tag}"))
+    if node is None:
+        node = OxmlElement(f"w:{tag}")
+        rpr.append(node)
+    node.set(qn("w:val"), "1" if bool(value) else "0")
+
+
+def _apply_page_run_style(run, style_overrides: Optional[Dict[str, Any]] = None) -> None:
+    """Apply page-number text formatting directly to a run."""
+    if not style_overrides:
+        return
+
+    from docx.shared import Pt
+
+    rpr = run._r.get_or_add_rPr()
+    font_family = style_overrides.get("font_family")
+    if font_family:
+        run.font.name = str(font_family)
+        rfonts = rpr.find(qn("w:rFonts"))
+        if rfonts is None:
+            rfonts = OxmlElement("w:rFonts")
+            rpr.insert(0, rfonts)
+        for attr in ("ascii", "hAnsi", "eastAsia", "cs"):
+            rfonts.set(qn(f"w:{attr}"), str(font_family))
+
+    size_pt = style_overrides.get("size_pt")
+    if size_pt:
+        run.font.size = Pt(float(size_pt))
+        sz_cs = rpr.find(qn("w:szCs"))
+        if sz_cs is None:
+            sz_cs = OxmlElement("w:szCs")
+            rpr.append(sz_cs)
+        sz_cs.set(qn("w:val"), str(int(round(float(size_pt) * 2))))
+
+    if "bold" in style_overrides:
+        run.font.bold = bool(style_overrides.get("bold"))
+        _set_rpr_bool(rpr, "bCs", bool(style_overrides.get("bold")))
+    if "italic" in style_overrides:
+        run.font.italic = bool(style_overrides.get("italic"))
+        _set_rpr_bool(rpr, "iCs", bool(style_overrides.get("italic")))
+
+
 def _add_page_field(paragraph, style_overrides: Optional[Dict[str, Any]] = None):
     """Builds a PAGE field: { PAGE } with optional style overrides.
     
@@ -51,37 +94,46 @@ def _add_page_field(paragraph, style_overrides: Optional[Dict[str, Any]] = None)
             - bold: bool
             - italic: bool
     """
-    from docx.shared import Pt
-    
-    r = paragraph.add_run()
-    
-    # Apply style overrides to the run
-    if style_overrides:
-        if style_overrides.get("font_family"):
-            r.font.name = style_overrides["font_family"]
-            # Also set for complex scripts
-            r._element.rPr.rFonts.set(qn("w:eastAsia"), style_overrides["font_family"])
-        if style_overrides.get("size_pt"):
-            r.font.size = Pt(style_overrides["size_pt"])
-        if style_overrides.get("bold") is not None:
-            r.font.bold = style_overrides["bold"]
-        if style_overrides.get("italic") is not None:
-            r.font.italic = style_overrides["italic"]
-    
     fldBegin = OxmlElement("w:fldChar")
     fldBegin.set(qn("w:fldCharType"), "begin")
     instrText = OxmlElement("w:instrText")
     instrText.set(qn("xml:space"), "preserve")
-    instrText.text = " PAGE "
+    instrText.text = " PAGE \\* MERGEFORMAT "
     fldSeparate = OxmlElement("w:fldChar")
     fldSeparate.set(qn("w:fldCharType"), "separate")
     fldEnd = OxmlElement("w:fldChar")
     fldEnd.set(qn("w:fldCharType"), "end")
 
-    r._r.append(fldBegin)
-    r._r.append(instrText)
-    r._r.append(fldSeparate)
-    r._r.append(fldEnd)
+    begin_run = paragraph.add_run()
+    _apply_page_run_style(begin_run, style_overrides)
+    begin_run._r.append(fldBegin)
+
+    instr_run = paragraph.add_run()
+    _apply_page_run_style(instr_run, style_overrides)
+    instr_run._r.append(instrText)
+
+    separate_run = paragraph.add_run()
+    _apply_page_run_style(separate_run, style_overrides)
+    separate_run._r.append(fldSeparate)
+
+    # Seed a styled result run so Word/LibreOffice have visible text
+    # formatting to preserve when updating the PAGE field.
+    result_run = paragraph.add_run("1")
+    _apply_page_run_style(result_run, style_overrides)
+
+    end_run = paragraph.add_run()
+    _apply_page_run_style(end_run, style_overrides)
+    end_run._r.append(fldEnd)
+
+
+def restyle_footer_page_numbers(docx_path: str, config: Dict[str, Any], footer_style_overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Re-apply page-number footer styling to an existing DOCX file."""
+    doc = Document(docx_path)
+    result = apply_footer_styles(doc, config, footer_style_overrides)
+    doc.save(docx_path)
+    result["output_path"] = docx_path
+    result["saved"] = True
+    return result
 
 def _has_explicit_page_break(p) -> bool:
     """Check for explicit page break (<w:br w:type="page"/>)."""

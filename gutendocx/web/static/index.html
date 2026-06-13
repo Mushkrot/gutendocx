@@ -682,14 +682,16 @@
       // Page Number (footer) style overrides
       const footer = {};
       if (document.getElementById('ovFooter')?.checked) {
-        const fam = document.getElementById('footerFamily')?.value.trim();
-        const sizeVal = parseFloat(document.getElementById('footerSize')?.value || '');
+        const familyEl = document.getElementById('footerFamily');
+        const sizeEl = document.getElementById('footerSize');
+        const fam = (familyEl?.value.trim() || familyEl?.placeholder.trim() || '');
+        const sizeVal = parseFloat(sizeEl?.value || sizeEl?.placeholder || '');
         const boldEl = document.getElementById('footerBold');
         const italicEl = document.getElementById('footerItalic');
         if (fam) footer.font_family = fam;
         if (!Number.isNaN(sizeVal) && sizeVal > 0) footer.size_pt = sizeVal;
-        if (boldEl && boldEl.checked) footer.bold = true;
-        if (italicEl && italicEl.checked) footer.italic = true;
+        footer.bold = !!(boldEl && boldEl.checked);
+        footer.italic = !!(italicEl && italicEl.checked);
       }
       if (Object.keys(footer).length) styles.footer = footer;
 

@@ -31,6 +31,7 @@ from gutendocx.core.word_cleanup import (
 )
 from gutendocx.core.toc import build_toc
 from gutendocx.core.libreoffice_toc import run_libreoffice_convert
+from gutendocx.core.layout import restyle_footer_page_numbers
 
 
 app = FastAPI(title="GutenDocx Web API", version="0.1.0")
@@ -320,6 +321,15 @@ def _style_override_from_ui(ov: Dict[str, Any], include_align: bool = True, foot
     if isinstance(spacing_after, (int, float)) and spacing_after >= 0:
         out["spacing_after_pt"] = float(spacing_after)
     return out
+
+
+def _restyle_final_footer_if_configured(output_path: Optional[str], cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not output_path:
+        return None
+    footer_style = ((cfg or {}).get("style_overrides") or {}).get("Footer")
+    if not isinstance(footer_style, dict) or not footer_style:
+        return None
+    return restyle_footer_page_numbers(output_path, cfg, footer_style)
 
 
 def _merge_ui_style_overrides(cfg: Dict[str, Any], styles: Optional[Dict[str, Any]]) -> None:
@@ -3553,6 +3563,9 @@ def whole_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                                 if lo_res.get("ok"):
                                     final_path = lo_res.get("output_path")
                                     if final_path:
+                                        footer_repair = _restyle_final_footer_if_configured(final_path, cfg)
+                                        if footer_repair:
+                                            r["footer_repair"] = footer_repair
                                         r["output_path"] = final_path
                                         r["toc_updated"] = True
                                     pdf_path = lo_res.get("pdf_output_path")
@@ -3649,6 +3662,9 @@ def whole_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                         if lo_res.get("ok"):
                             final_path = lo_res.get("output_path")
                             if final_path:
+                                footer_repair = _restyle_final_footer_if_configured(final_path, cfg)
+                                if footer_repair:
+                                    res["footer_repair"] = footer_repair
                                 res["output_path"] = final_path
                                 res["toc_updated"] = True
                                 # Include PDF result if available
@@ -3997,6 +4013,10 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                     if lo_res.get("ok"):
                         final_path = lo_res.get("output_path")
                         if final_path:
+                            if req.apply_body:
+                                footer_repair = _restyle_final_footer_if_configured(final_path, cfg_file)
+                                if footer_repair:
+                                    r["footer_repair"] = footer_repair
                             r["output_path"] = final_path
                         pdf_out = lo_res.get("pdf_output_path")
                         if pdf_out:
@@ -4220,6 +4240,10 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
             if lo_res.get("ok"):
                 final_path = lo_res.get("output_path")
                 if final_path:
+                    if req.apply_body:
+                        footer_repair = _restyle_final_footer_if_configured(final_path, cfg)
+                        if footer_repair:
+                            result["footer_repair"] = footer_repair
                     result["output_path"] = final_path
                 pdf_path = lo_res.get("pdf_output_path")
                 if pdf_path:

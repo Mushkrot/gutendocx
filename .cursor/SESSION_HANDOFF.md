@@ -1,6 +1,6 @@
 # GutenDocx Session Handoff
 
-Last updated: 2026-06-07 UTC
+Last updated: 2026-06-12 UTC
 
 ## Start Here
 
@@ -33,6 +33,29 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Diagnostic audit events are written to `output/audit_events.jsonl`. They should capture what the user clicked/tried, selected options, uploaded file metadata, endpoint timings, outputs, and errors without storing document contents.
 
 ## Recent Audit
+
+2026-06-12 cover/page-number style override regressions:
+
+- Client-reported style issue was traced to 2026-06-09 apply jobs:
+  - `batch_1780990060`: `pg1112.docx`-`pg1124.docx`;
+  - `batch_1780996526`: `pg1125.docx`;
+  - `batch_1780996834`: `pg1126.docx`-`pg1137.docx`.
+- Baseline QA on saved client outputs confirmed:
+  - `Cover Author` direct `24pt`/bold formatting survived over the configured `Cover Author` style in `pg1125`, `pg1128`, and `pg1133`-`pg1137`;
+  - all 26 final DOCX files had footer PAGE fields without explicit page-number style run properties.
+- Implemented fixes:
+  - cover role application now clears direct run formatting by default for Title, Subtitle, and Author;
+  - PAGE fields now include styled field/result runs, and final DOCX files are repaired after LibreOffice round-trip before ZIP/download packaging;
+  - Page Number UI override now sends explicit unchecked `bold:false`/`italic:false` and effective visible family/size values.
+- Added regression tests in `gutendocx/tests/test_cover_footer_style_regressions.py`.
+- Verification passed:
+  - before QA: `BASELINE_COVER_BAD_COUNT 7`, `BASELINE_FOOTER_BAD_COUNT 26 OF 26`;
+  - after QA on the same real files: deterministic cover bad count `0`, footer repair bad count `0 OF 26`;
+  - py_compile for changed Python files;
+  - full `./gutenberg/bin/python -m pytest gutendocx/tests -q` with 25 tests;
+  - extracted Web UI script `node --check -`.
+- Production was not restarted in this session. Restart/deploy still needs the standard pre-checks, localhost bind verification, local `/health`, and Cloudflare Access redirect check if the user asks to deploy.
+- `config.yaml` remains runtime/user state and should not be staged unless explicitly requested.
 
 2026-06-07 polling/throughput/download observability:
 

@@ -819,8 +819,8 @@ def apply_cover_styles(doc: Document, detection: Dict[str, Any], config: Dict[st
 
     clear_roles = (norm_cfg.get("clear_direct_formatting_on_roles", {}) or {})
     clear_title = bool(clear_roles.get("title", True))
-    clear_subtitle = bool(clear_roles.get("subtitle", False))
-    clear_author = bool(clear_roles.get("author", False))
+    clear_subtitle = bool(clear_roles.get("subtitle", True))
+    clear_author = bool(clear_roles.get("author", True))
 
     def _clear_runs(p):
         for r in p.runs:
@@ -828,25 +828,10 @@ def apply_cover_styles(doc: Document, detection: Dict[str, Any], config: Dict[st
                 r.style = None
             except Exception:
                 pass
-            f = r.font
             try:
-                f.size = None
-            except Exception:
-                pass
-            try:
-                f.bold = None
-            except Exception:
-                pass
-            try:
-                f.italic = None
-            except Exception:
-                pass
-            try:
-                f.all_caps = None
-            except Exception:
-                pass
-            try:
-                f.small_caps = None
+                rpr = r._r.rPr
+                if rpr is not None:
+                    r._r.remove(rpr)
             except Exception:
                 pass
 

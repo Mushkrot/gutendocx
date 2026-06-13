@@ -1,6 +1,6 @@
 # GutenDocx - Implementation Status
 
-**Last updated:** 2026-06-07
+**Last updated:** 2026-06-12
 **Project path:** `/ai/gutendocx`
 **Production URL:** `https://gutendocx.unicloud.ca`
 
@@ -28,6 +28,8 @@ This project is not a public discovery/SEO site. It is intended for one client p
   - `output/ai_costs.jsonl` for best-effort estimated AI token/cost events.
 - Upload UX: the primary "Upload files" control is a normal multi-file `.docx` picker. Do not attach `webkitdirectory` to that control unless adding a separate, explicitly labeled folder-upload feature.
 - Word mark cleanup: the main UI has an optional `Clean parasite Word marks` body setting for `^p` / `^l` patterns. It is disabled by default and only cleans eligible blank/manual-line-break-only body gaps before style normalization.
+- Cover style overrides clear direct run formatting for Title, Subtitle, and Author so configured cover role styles are not overridden by source `24pt`/bold run properties.
+- Page-number footer styling is re-applied to final DOCX files after LibreOffice round-trip so PAGE fields retain configured font/size/bold/italic values in downloaded DOCX outputs.
 
 ## Production Baseline
 
@@ -93,6 +95,7 @@ These items are captured for future planning and should not be implemented witho
 
 ## Recent Changes
 
+- **2026-06-12:** Fixed cover role and page-number style override regressions reported from 2026-06-09 client jobs. Baseline QA on saved outputs showed `Cover Author` direct `24pt`/bold formatting in `pg1125`, `pg1128`, and `pg1133`-`pg1137`, plus missing PAGE-field style properties in all 26 final DOCX files from batches `batch_1780990060`, `batch_1780996526`, and `batch_1780996834`. Cover role application now clears direct run formatting for Title/Subtitle/Author, PAGE fields are created with styled result runs, final DOCX footer PAGE fields are repaired after LibreOffice, and the UI sends explicit unchecked Page Number bold/italic values. After-QA on the same real files returned deterministic cover bad count `0` and footer repair bad count `0 OF 26`; full pytest passed with 25 tests, Python syntax checks passed, and extracted Web UI JS passed `node --check -`. Production was not restarted as part of this work.
 - **2026-06-07:** Tightened logging signal and admin operations metrics without changing file processing. Polling noise is reduced by logging only first/state-change/sample `job.checked` and `client.apply_job_polled` events, `/admin/api/summary` now reports download confirmations, average batch duration, average seconds per file, slowest jobs, and cover+vision-without-AI-cost warnings, and `/admin` displays the new metrics/panels. Full pytest, Python syntax, admin JS syntax, live-log summary timing checks passed; production was restarted and verified with localhost binding, local health, admin summary, and Cloudflare Access redirect preserved.
 - **2026-06-07:** Extended parasite Word-mark cleanup with a read-only advisor and apply report UX. The UI now keeps the manual `Clean parasite Word marks` textarea and adds `Analyze cleanup` plus `Apply recommended cleanup`; the advisor inspects body blank gaps structurally, recommends high-confidence `^p` / `^l` patterns without sending document text to an external AI service, and fills the editable textarea. The patterns field now labels whether values came from saved config, latest analysis, or manual edits, and the analysis report has a fixed max height with internal scrolling. Successful Apply now shows a short cleanup popup for both manual and recommended runs with patterns used, gaps cleaned, empty paragraphs removed, and manual line breaks removed. Full pytest, Python syntax, UI script syntax, production restart, localhost bind, local health, advisor endpoint, and Cloudflare Access redirect checks passed.
 - **2026-06-07:** Added managed parasite Word-mark cleanup for body processing. The UI now exposes `Clean parasite Word marks` under `Whole document -> Text styles`, accepts `^p` / `^l` patterns, and stores them under `word_cleanup` with fixed replacement `^p`. The cleanup pass runs before body/headings/`Para1` style passes, removes only eligible blank/manual-line-break-only body gaps, skips headings/TOC/protected/page-break/section-break/field/object paragraphs, and returns count-only metadata in `whole.word_cleanup` and audit summaries. Full pytest and UI script syntax checks passed; production was restarted and verified with localhost binding, local health, new UI/config availability, and Cloudflare Access redirect preserved.
