@@ -23,7 +23,7 @@ from gutendocx.core.config import load_config, save_config
 from gutendocx.core.cover import run_cover_pipeline, learn_cover_styles
 from gutendocx.core.loader import Loader
 from gutendocx.core.vision import detect_cover_roles_vision
-from gutendocx.core.whole import _compute_body_start_index, analyze_whole_document, apply_whole_document
+from gutendocx.core.whole import _compute_body_start_index, analyze_whole_document, apply_whole_document, restyle_body_nested_runs
 from gutendocx.core.word_cleanup import (
     WORD_CLEANUP_REPLACEMENT,
     analyze_word_cleanup,
@@ -339,6 +339,15 @@ def _restyle_final_toc_if_configured(output_path: Optional[str], cfg: Dict[str, 
     if not isinstance(toc_style, dict) or not toc_style:
         return None
     return restyle_toc_after_libreoffice(output_path, cfg)
+
+
+def _restyle_final_body_nested_if_configured(output_path: Optional[str], cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not output_path:
+        return None
+    body_style = ((cfg or {}).get("style_overrides") or {}).get("Body")
+    if not isinstance(body_style, dict) or not body_style:
+        return None
+    return restyle_body_nested_runs(output_path, cfg)
 
 
 def _merge_ui_style_overrides(cfg: Dict[str, Any], styles: Optional[Dict[str, Any]]) -> None:
@@ -3595,6 +3604,9 @@ def whole_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                                 if lo_res.get("ok"):
                                     final_path = lo_res.get("output_path")
                                     if final_path:
+                                        body_nested_repair = _restyle_final_body_nested_if_configured(final_path, cfg)
+                                        if body_nested_repair:
+                                            r["body_nested_repair"] = body_nested_repair
                                         toc_repair = _restyle_final_toc_if_configured(final_path, cfg)
                                         if toc_repair:
                                             r["toc_repair"] = toc_repair
@@ -3697,6 +3709,9 @@ def whole_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                         if lo_res.get("ok"):
                             final_path = lo_res.get("output_path")
                             if final_path:
+                                body_nested_repair = _restyle_final_body_nested_if_configured(final_path, cfg)
+                                if body_nested_repair:
+                                    res["body_nested_repair"] = body_nested_repair
                                 toc_repair = _restyle_final_toc_if_configured(final_path, cfg)
                                 if toc_repair:
                                     res["toc_repair"] = toc_repair
@@ -4051,6 +4066,10 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                     if lo_res.get("ok"):
                         final_path = lo_res.get("output_path")
                         if final_path:
+                            if req.apply_body:
+                                body_nested_repair = _restyle_final_body_nested_if_configured(final_path, cfg_file)
+                                if body_nested_repair:
+                                    r["body_nested_repair"] = body_nested_repair
                             if req.update_toc:
                                 toc_repair = _restyle_final_toc_if_configured(final_path, cfg_file)
                                 if toc_repair:
@@ -4282,6 +4301,10 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
             if lo_res.get("ok"):
                 final_path = lo_res.get("output_path")
                 if final_path:
+                    if req.apply_body:
+                        body_nested_repair = _restyle_final_body_nested_if_configured(final_path, cfg)
+                        if body_nested_repair:
+                            result["body_nested_repair"] = body_nested_repair
                     if req.update_toc:
                         toc_repair = _restyle_final_toc_if_configured(final_path, cfg)
                         if toc_repair:

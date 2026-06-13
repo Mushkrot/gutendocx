@@ -1,12 +1,13 @@
 from zipfile import ZipFile
 
+from lxml import etree
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
-from gutendocx.core.toc import repair_toc_result_runs, resolve_toc_style_overrides
-from gutendocx.core.whole import apply_whole_document
+from gutendocx.core.toc import build_toc, repair_toc_result_runs, resolve_toc_style_overrides
+from gutendocx.core.whole import apply_whole_document, restyle_body_nested_runs
 
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -94,6 +95,25 @@ def test_body_styles_table_cells_and_hyperlink_visible_runs_without_touching_fie
     assert instr_run.find(_w("rPr")) is None
 
 
+def test_body_nested_runs_can_be_repaired_after_round_trip(tmp_path):
+    doc = Document()
+    table = doc.add_table(rows=1, cols=1)
+    table.cell(0, 0).paragraphs[0].add_run("Table text")
+    hyperlink_paragraph = doc.add_paragraph("See ")
+    _add_hyperlink(hyperlink_paragraph, "linked text")
+    path = tmp_path / "repair.docx"
+    doc.save(path)
+
+    restyle_body_nested_runs(str(path), _body_config(tmp_path))
+
+    with ZipFile(path) as zf:
+        root = etree.fromstring(zf.read("word/document.xml"))
+    table_run = root.xpath(".//w:tbl//w:r[w:t]", namespaces={"w": W_NS})[0]
+    hyperlink_run = root.xpath(".//w:hyperlink//w:r[w:t]", namespaces={"w": W_NS})[0]
+    _run_style_ok(table_run)
+    _run_style_ok(hyperlink_run)
+
+
 def test_resolve_toc_style_modes():
     config = {
         "style_overrides": {
@@ -169,3 +189,41 @@ def test_toc_result_runs_inside_sdt_are_repaired_without_removing_fields():
     assert begin_run.find(_w("rPr")) is None
     assert instr_run.find(_w("rPr")) is None
     assert p.find(".//" + _w("instrText")).text.startswith(" TOC")
+
+
+def test_build_toc_preserves_existing_sdt_toc(tmp_path):
+    doc = Document()
+    doc.add_paragraph("Chapter 1").style = doc.styles["Heading 1"]
+    sdt = OxmlElement("w:sdt")
+    content = OxmlElement("w:sdtContent")
+    sdt.append(content)
+    p = OxmlElement("w:p")
+    instr_run = OxmlElement("w:r")
+    instr = OxmlElement("w:instrText")
+    instr.text = ' TOC \\o "1-3" \\h '
+    instr_run.append(instr)
+    p.append(instr_run)
+    text_run = OxmlElement("w:r")
+    text_node = OxmlElement("w:t")
+    text_node.text = "Existing entry"
+    text_run.append(text_node)
+    p.append(text_run)
+    content.append(p)
+    doc._element.body.append(sdt)
+    path = tmp_path / "toc.docx"
+    doc.save(path)
+
+    result = build_toc(
+        str(path),
+        {
+            "output": {"dir": str(tmp_path), "versioning": True},
+            "style_overrides": {"TOC": {"mode": "custom", "family": "Georgia", "size_pt": 9}},
+        },
+    )
+
+    assert result["toc"]["inserted"]["inserted_at_end"] is False
+    assert result["toc"]["removed"]["preserved_existing"] is True
+    with ZipFile(result["output_path"]) as zf:
+        root = etree.fromstring(zf.read("word/document.xml"))
+    assert len(root.xpath(".//w:sdt", namespaces={"w": W_NS})) == 1
+    assert "Existing entry" in "".join(root.xpath(".//w:t/text()", namespaces={"w": W_NS}))

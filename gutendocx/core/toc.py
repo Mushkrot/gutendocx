@@ -436,8 +436,18 @@ def build_toc(input_path: str, config: Dict[str, Any], mode: str = "structured")
                 "threshold": min_existing,
             }
 
-    removed = remove_existing_toc(doc)
-    inserted = insert_word_toc(doc, config)
+    existing_toc_indices = find_toc_paragraph_indices(doc)
+    if existing_toc_indices:
+        removed = {
+            "removed": 0,
+            "paragraphs_removed": 0,
+            "indices": existing_toc_indices,
+            "preserved_existing": True,
+        }
+        inserted = {"inserted_at_end": False, "reason": "existing_toc_preserved"}
+    else:
+        removed = remove_existing_toc(doc)
+        inserted = insert_word_toc(doc, config)
     toc_style_result = apply_toc_styles(doc, config)
 
     # Ensure body section has proper page numbering restart for correct TOC

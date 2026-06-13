@@ -437,6 +437,39 @@ def _apply_body_font_to_tables_and_hyperlinks(
     }
 
 
+def restyle_body_nested_runs(docx_path: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    """Re-apply body font overrides to table text and visible hyperlink runs."""
+    doc = Document(docx_path)
+    body_start = _compute_body_start_index(doc)
+    protected_names = {
+        "Title",
+        "Subtitle",
+        "Author",
+        "Cover Title",
+        "Cover Subtitle",
+        "Cover Author",
+        "Header",
+        "Footer",
+    }
+    detected_mapping = (config or {}).get("detected_style_mapping", {}) or {}
+    detected_heading_names = {
+        str(v)
+        for k, v in detected_mapping.items()
+        if str(k) in ("Headings", "Heading1", "Heading2", "Heading3", "Heading4") and v
+    }
+    result = _apply_body_font_to_tables_and_hyperlinks(
+        doc,
+        config,
+        body_start,
+        protected_names,
+        detected_heading_names,
+    )
+    doc.save(docx_path)
+    result["output_path"] = docx_path
+    result["saved"] = True
+    return result
+
+
 def _apply_body_style_overrides(doc: Document, config: Dict[str, Any], body_start: int) -> Dict[str, Any]:
     """Apply overrides directly to body paragraphs, only for explicitly specified properties.
 
