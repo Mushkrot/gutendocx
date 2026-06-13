@@ -8,6 +8,29 @@
 
 ## Current Session - Resume Point
 
+**2026-06-13:** Added cautious table, hyperlink, and TOC style repair.
+
+Current iteration:
+
+- Investigated client examples `pg61492.docx` and `pg61506.docx`.
+  - `pg61492.docx` contains 4 tables and 173 table-cell paragraphs.
+  - Both files contain many `w:hyperlink` runs and an existing TOC inside `w:sdt/w:sdtContent`.
+- Implemented a narrow font-level repair:
+  - body font/size/bold/italic now also reaches table-cell text and visible hyperlink runs;
+  - table geometry, borders, widths, cell margins, hyperlink relationships, field instructions, and TOC/PAGEREF field codes are not recreated or removed;
+  - TOC styling supports `Same as Body`, `Same as Heading`, and `Custom` in the UI and is stored in `style_overrides.TOC`;
+  - TOC styles/result-runs are repaired after LibreOffice, including TOC paragraphs inside `sdtContent`.
+- QA on attached examples:
+  - baseline with target Body `Aptos 10` and TOC `Georgia 9`: `pg61492` had table `164/164` bad, hyperlink `41/41` bad, TOC `52/52` bad; `pg61506` had hyperlink `40/40` bad and TOC `46/46` bad;
+  - after core body repair: table/hyperlink bad counts reached `0` on the same files;
+  - existing-source TOC repair on copied attachments reduced TOC bad counts to `0` while preserving field instructions.
+- Verification so far:
+  - safety commit before this work: `9aae156` (`Fix cover roles and footer page number styling`), excluding runtime `config.yaml`;
+  - `./gutenberg/bin/python -m pytest gutendocx/tests -q` passed with 28 tests;
+  - extracted Web UI script passed `node --check -`.
+- Host-mode LibreOffice (`use_docker=false`) only performs `--convert-to docx` in this app path, so full PDF/ZIP/index-update acceptance must be verified through the production Docker/UNO path after restart.
+- Runtime `config.yaml` remains user/platform state and must not be staged unless explicitly requested.
+
 **2026-06-12:** Fixed cover role and page-number style override regressions.
 
 Current iteration:

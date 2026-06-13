@@ -29,7 +29,7 @@ from gutendocx.core.word_cleanup import (
     analyze_word_cleanup,
     parse_word_cleanup_patterns,
 )
-from gutendocx.core.toc import build_toc
+from gutendocx.core.toc import build_toc, restyle_toc_after_libreoffice
 from gutendocx.core.libreoffice_toc import run_libreoffice_convert
 from gutendocx.core.layout import restyle_footer_page_numbers
 
@@ -267,7 +267,7 @@ def _styles_summary(styles: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not isinstance(styles, dict):
         return {}
     out: Dict[str, Any] = {}
-    for key in ("body", "headings", "footer", "title", "subtitle", "author", "specials"):
+    for key in ("body", "headings", "footer", "toc", "title", "subtitle", "author", "specials"):
         val = styles.get(key)
         if isinstance(val, dict):
             out[key] = val
@@ -332,6 +332,15 @@ def _restyle_final_footer_if_configured(output_path: Optional[str], cfg: Dict[st
     return restyle_footer_page_numbers(output_path, cfg, footer_style)
 
 
+def _restyle_final_toc_if_configured(output_path: Optional[str], cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not output_path:
+        return None
+    toc_style = ((cfg or {}).get("style_overrides") or {}).get("TOC")
+    if not isinstance(toc_style, dict) or not toc_style:
+        return None
+    return restyle_toc_after_libreoffice(output_path, cfg)
+
+
 def _merge_ui_style_overrides(cfg: Dict[str, Any], styles: Optional[Dict[str, Any]]) -> None:
     if not isinstance(styles, dict):
         return
@@ -364,6 +373,16 @@ def _merge_ui_style_overrides(cfg: Dict[str, Any], styles: Optional[Dict[str, An
         new_footer = _style_override_from_ui(footer_ov, include_align=False, footer=True)
         if new_footer:
             so["Footer"] = new_footer
+
+    toc_ov = styles.get("toc")
+    if isinstance(toc_ov, dict):
+        mode = str(toc_ov.get("mode") or "same_body").strip().lower()
+        if mode not in {"same_body", "same_heading", "custom"}:
+            mode = "same_body"
+        new_toc = {"mode": mode}
+        if mode == "custom":
+            new_toc.update(_style_override_from_ui(toc_ov, include_align=False))
+        so["TOC"] = new_toc
 
     if so:
         cfg["style_overrides"] = so
@@ -484,6 +503,7 @@ def _toc_request_summary(req: "TocApplyRequest") -> Dict[str, Any]:
             "soffice": req.soffice,
             "timeout": req.timeout,
         },
+        "styles": _styles_summary(req.styles),
     }
 
 
@@ -1491,6 +1511,7 @@ class TocApplyRequest(BaseModel):
     timeout: Optional[int] = None
     batch_files: Optional[List[str]] = None
     batch_id: Optional[str] = None
+    styles: Optional[Dict[str, Any]] = None
 
 
 class LearnCoverStylesRequest(BaseModel):
@@ -2831,6 +2852,7 @@ def get_config(config_path: str = None) -> Dict[str, Any]:
             "body": style_overrides.get("Body", {}),
             "headings": style_overrides.get("Headings", {}),
             "footer": style_overrides.get("Footer", {}),
+            "toc": style_overrides.get("TOC", {}),
             "word_cleanup": cfg.get("word_cleanup", {}),
         }
     except Exception as e:
@@ -3176,6 +3198,9 @@ def toc_apply(req: TocApplyRequest, request: Request) -> Dict[str, Any]:
     print(f"DEBUG: toc_apply called. input={req.input}, batch_files={req.batch_files}")
     try:
         cfg = load_config(req.config_path)
+        if req.styles and isinstance(req.styles, dict):
+            _merge_ui_style_overrides(cfg, req.styles)
+            save_config(cfg, req.config_path)
         mode = req.mode or "structured"
 
         # LibreOffice settings
@@ -3213,7 +3238,11 @@ def toc_apply(req: TocApplyRequest, request: Request) -> Dict[str, Any]:
                 "output_path": final_path,
                 "libreoffice_ok": lo_res.get("ok"),
             }
-            if not lo_res.get("ok"):
+            if lo_res.get("ok"):
+                toc_repair = _restyle_final_toc_if_configured(final_path, cfg)
+                if toc_repair:
+                    result["toc_repair"] = toc_repair
+            else:
                 result["toc_error"] = lo_res.get("error") or lo_res.get("stderr")
             return result
 
@@ -3274,6 +3303,7 @@ def toc_apply(req: TocApplyRequest, request: Request) -> Dict[str, Any]:
             raise HTTPException(status_code=500, detail=f"LibreOffice TOC update failed: {err}")
 
         final_path = lo_res.get("output_path") or pre_lo_path
+        toc_repair = _restyle_final_toc_if_configured(final_path, cfg)
 
         res: Dict[str, Any] = {
             "toc": toc_res.get("toc"),
@@ -3287,6 +3317,8 @@ def toc_apply(req: TocApplyRequest, request: Request) -> Dict[str, Any]:
                 "command": lo_res.get("command"),
             },
         }
+        if toc_repair:
+            res["toc_repair"] = toc_repair
 
         pdf_path = lo_res.get("pdf_output_path")
         if pdf_path:
@@ -3563,6 +3595,9 @@ def whole_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                                 if lo_res.get("ok"):
                                     final_path = lo_res.get("output_path")
                                     if final_path:
+                                        toc_repair = _restyle_final_toc_if_configured(final_path, cfg)
+                                        if toc_repair:
+                                            r["toc_repair"] = toc_repair
                                         footer_repair = _restyle_final_footer_if_configured(final_path, cfg)
                                         if footer_repair:
                                             r["footer_repair"] = footer_repair
@@ -3662,6 +3697,9 @@ def whole_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                         if lo_res.get("ok"):
                             final_path = lo_res.get("output_path")
                             if final_path:
+                                toc_repair = _restyle_final_toc_if_configured(final_path, cfg)
+                                if toc_repair:
+                                    res["toc_repair"] = toc_repair
                                 footer_repair = _restyle_final_footer_if_configured(final_path, cfg)
                                 if footer_repair:
                                     res["footer_repair"] = footer_repair
@@ -4013,6 +4051,10 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                     if lo_res.get("ok"):
                         final_path = lo_res.get("output_path")
                         if final_path:
+                            if req.update_toc:
+                                toc_repair = _restyle_final_toc_if_configured(final_path, cfg_file)
+                                if toc_repair:
+                                    r["toc_repair"] = toc_repair
                             if req.apply_body:
                                 footer_repair = _restyle_final_footer_if_configured(final_path, cfg_file)
                                 if footer_repair:
@@ -4240,6 +4282,10 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
             if lo_res.get("ok"):
                 final_path = lo_res.get("output_path")
                 if final_path:
+                    if req.update_toc:
+                        toc_repair = _restyle_final_toc_if_configured(final_path, cfg)
+                        if toc_repair:
+                            result["toc_repair"] = toc_repair
                     if req.apply_body:
                         footer_repair = _restyle_final_footer_if_configured(final_path, cfg)
                         if footer_repair:

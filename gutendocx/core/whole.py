@@ -12,8 +12,20 @@ from .loader import Loader
 from .scan import _style_key, _style_name, _has_paragraph_overrides
 from .cover import _ensure_output_path
 from .styles_xml import cleanup_styles_xml
+from .docx_format import (
+    W_NS,
+    apply_text_style_to_run_element,
+    has_text_style,
+    run_has_visible_text,
+    style_name_by_id,
+    text_style_from_override,
+)
 from .layout import ensure_body_section_with_numbering, analyze_document_sections, ensure_blank_page_after_cover, apply_footer_styles
 from .word_cleanup import apply_word_cleanup
+
+
+def _w_tag(name: str) -> str:
+    return f"{{{W_NS}}}{name}"
 
 
 def _has_explicit_page_break(p) -> bool:
@@ -282,6 +294,149 @@ def _apply_special_style_overrides(doc: Document, config: Dict[str, Any]) -> Dic
     return {"applied": bool(applied), "styles": applied}
 
 
+def _paragraph_style_id_xml(p_el) -> str:
+    try:
+        p_style = p_el.find(f"./{_w_tag('pPr')}/{_w_tag('pStyle')}")
+        if p_style is not None:
+            return str(p_style.get(_w_tag("val")) or "")
+    except Exception:
+        pass
+    return ""
+
+
+def _body_region_roots(doc: Document, body_start: int) -> List[Any]:
+    """Return direct body-child elements that belong to the post-cover body."""
+    roots: List[Any] = []
+    try:
+        body = doc._element.body
+    except Exception:
+        return roots
+
+    direct_paragraph_index = 0
+    for child in list(body):
+        if child.tag == _w_tag("p"):
+            if direct_paragraph_index >= body_start:
+                roots.append(child)
+            direct_paragraph_index += 1
+        elif direct_paragraph_index >= body_start:
+            roots.append(child)
+    return roots
+
+
+def _direct_body_child(el):
+    cur = el
+    while cur is not None:
+        parent = cur.getparent()
+        if parent is not None and parent.tag == _w_tag("body"):
+            return cur
+        cur = parent
+    return None
+
+
+def _is_in_body_region_xml(el, body_roots: List[Any]) -> bool:
+    root = _direct_body_child(el)
+    return root is not None and any(root is item or root == item for item in body_roots)
+
+
+def _is_toc_paragraph_xml(p_el, style_names: Dict[str, str]) -> bool:
+    sid = _paragraph_style_id_xml(p_el)
+    sname = style_names.get(sid, "")
+    if sid.lower().startswith("toc") or sname.lower().startswith("toc"):
+        return True
+    try:
+        instr = " ".join(t for t in p_el.xpath(".//w:instrText/text()") if t)
+    except Exception:
+        instr = ""
+    upper = instr.upper()
+    return "TOC" in upper or "PAGEREF" in upper
+
+
+def _is_protected_body_paragraph_xml(
+    p_el,
+    style_names: Dict[str, str],
+    protected_names: Set[str],
+    detected_heading_names: Set[str],
+) -> bool:
+    sid = _paragraph_style_id_xml(p_el)
+    name = style_names.get(sid, "")
+    if not name:
+        return False
+    lname = name.lower()
+    return bool(
+        name in protected_names
+        or name.startswith("Heading ")
+        or name in detected_heading_names
+        or lname.startswith("toc")
+    )
+
+
+def _apply_body_font_to_tables_and_hyperlinks(
+    doc: Document,
+    config: Dict[str, Any],
+    body_start: int,
+    protected_names: Set[str],
+    detected_heading_names: Set[str],
+) -> Dict[str, Any]:
+    so = (config or {}).get("style_overrides", {}) or {}
+    text_style = text_style_from_override(so.get("Body", {}) or {})
+    if not has_text_style(text_style):
+        return {
+            "applied": False,
+            "paragraphs_modified": 0,
+            "table_runs_modified": 0,
+            "hyperlink_runs_modified": 0,
+        }
+
+    try:
+        body = doc._element.body
+    except Exception:
+        return {
+            "applied": False,
+            "paragraphs_modified": 0,
+            "table_runs_modified": 0,
+            "hyperlink_runs_modified": 0,
+        }
+
+    body_roots = _body_region_roots(doc, body_start)
+    style_names = style_name_by_id(doc)
+    paragraphs_modified = 0
+    table_runs_modified = 0
+    hyperlink_runs_modified = 0
+
+    for p_el in body.xpath(".//w:p"):
+        if not _is_in_body_region_xml(p_el, body_roots):
+            continue
+        if _is_toc_paragraph_xml(p_el, style_names):
+            continue
+        if _is_protected_body_paragraph_xml(p_el, style_names, protected_names, detected_heading_names):
+            continue
+
+        in_table = bool(p_el.xpath("ancestor::w:tbl"))
+        paragraph_modified = False
+        for r_el in p_el.xpath(".//w:r"):
+            in_hyperlink = bool(r_el.xpath("ancestor::w:hyperlink"))
+            if not in_table and not in_hyperlink:
+                continue
+            if not run_has_visible_text(r_el):
+                continue
+            if apply_text_style_to_run_element(r_el, text_style):
+                paragraph_modified = True
+                if in_table:
+                    table_runs_modified += 1
+                if in_hyperlink:
+                    hyperlink_runs_modified += 1
+
+        if paragraph_modified:
+            paragraphs_modified += 1
+
+    return {
+        "applied": bool(paragraphs_modified),
+        "paragraphs_modified": paragraphs_modified,
+        "table_runs_modified": table_runs_modified,
+        "hyperlink_runs_modified": hyperlink_runs_modified,
+    }
+
+
 def _apply_body_style_overrides(doc: Document, config: Dict[str, Any], body_start: int) -> Dict[str, Any]:
     """Apply overrides directly to body paragraphs, only for explicitly specified properties.
 
@@ -356,6 +511,8 @@ def _apply_body_style_overrides(doc: Document, config: Dict[str, Any], body_star
         # Apply font-level overrides to each run in the paragraph
         if font_name or size_pt is not None or bold is not None or italic is not None:
             for r in p.runs:
+                if not run_has_visible_text(r._r):
+                    continue
                 try:
                     f = r.font
                     if font_name:
@@ -439,7 +596,20 @@ def _apply_body_style_overrides(doc: Document, config: Dict[str, Any], body_star
         if modified:
             paragraphs_modified += 1
 
-    return {"applied": bool(changes), "changes": changes, "paragraphs_modified": paragraphs_modified}
+    nested_font_result = _apply_body_font_to_tables_and_hyperlinks(
+        doc,
+        config,
+        body_start,
+        protected_names,
+        detected_heading_names,
+    )
+
+    return {
+        "applied": bool(changes) or bool(nested_font_result.get("applied")),
+        "changes": changes,
+        "paragraphs_modified": paragraphs_modified,
+        "nested_font_overrides": nested_font_result,
+    }
 
 
 def _paragraph_has_manual_line_break(p) -> bool:
@@ -626,6 +796,8 @@ def _apply_headings_style_overrides(doc: Document, config: Dict[str, Any], body_
 
         if font_name or size_pt is not None or bold is not None or italic is not None or all_caps is not None:
             for r in p.runs:
+                if not run_has_visible_text(r._r):
+                    continue
                 try:
                     f = r.font
                     if font_name:

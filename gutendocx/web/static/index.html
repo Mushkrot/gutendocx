@@ -507,6 +507,24 @@
               <option value="auto">Auto</option>
             </select>
           </div>
+          <div class="inline" style="margin-top:8px;">
+            <label for="tocStyleMode">TOC style</label>
+            <select id="tocStyleMode" class="w-200">
+              <option value="same_body" selected>Same as Body</option>
+              <option value="same_heading">Same as Heading</option>
+              <option value="custom">Custom</option>
+            </select>
+            <span id="tocStyleCustomControls" class="inline" style="display:none;">
+              <label>Family</label>
+              <input id="tocFamily" class="w-200" type="text" placeholder="Times New Roman" />
+              <select id="tocFontSel" class="w-200"></select>
+              <label>Size</label>
+              <input id="tocSize" class="w-80" type="number" min="6" max="96" step="1" placeholder="12" />
+              <select id="tocSizeSel" class="w-80"></select>
+              <label><input id="tocBold" type="checkbox" /> Bold</label>
+              <label><input id="tocItalic" type="checkbox" /> Italic</label>
+            </span>
+          </div>
         </div>
       </details>
     </div>
@@ -694,6 +712,24 @@
         footer.italic = !!(italicEl && italicEl.checked);
       }
       if (Object.keys(footer).length) styles.footer = footer;
+
+      const tocModeEl = document.getElementById('tocStyleMode');
+      if (tocModeEl) {
+        const toc = { mode: tocModeEl.value || 'same_body' };
+        if (toc.mode === 'custom') {
+          const familyEl = document.getElementById('tocFamily');
+          const sizeEl = document.getElementById('tocSize');
+          const fam = (familyEl?.value.trim() || familyEl?.placeholder.trim() || '');
+          const sizeVal = parseFloat(sizeEl?.value || sizeEl?.placeholder || '');
+          const boldEl = document.getElementById('tocBold');
+          const italicEl = document.getElementById('tocItalic');
+          if (fam) toc.family = fam;
+          if (!Number.isNaN(sizeVal) && sizeVal > 0) toc.size_pt = sizeVal;
+          toc.bold = !!(boldEl && boldEl.checked);
+          toc.italic = !!(italicEl && italicEl.checked);
+        }
+        styles.toc = toc;
+      }
 
       const specialsOut = {};
       for (const row of document.querySelectorAll('#specialStylesList .spec-style-row')) {
@@ -1671,6 +1707,7 @@
       populateFontSelect('authorFontSel','authorFamily');
       populateFontSelect('bodyFontSel','bodyFamily');
       populateFontSelect('footerFontSel','footerFamily');
+      populateFontSelect('tocFontSel','tocFamily');
     }
     
     // Load fonts from server and init font dropdowns
@@ -1714,6 +1751,16 @@
         const footer = cfg.footer || {};
         if (footer.font_family) $('footerFamily').placeholder = footer.font_family;
         if (footer.size_pt) $('footerSize').placeholder = String(footer.size_pt);
+
+        const toc = cfg.toc || {};
+        const tocStyleMode = document.getElementById('tocStyleMode');
+        if (tocStyleMode && toc.mode) tocStyleMode.value = toc.mode;
+        if (toc.font) $('tocFamily').placeholder = toc.font;
+        if (toc.font_family) $('tocFamily').placeholder = toc.font_family;
+        if (toc.size_pt) $('tocSize').placeholder = String(toc.size_pt);
+        if ('bold' in toc) $('tocBold').checked = !!toc.bold;
+        if ('italic' in toc) $('tocItalic').checked = !!toc.italic;
+        updateTocStyleModeUI();
 
         const wordCleanup = cfg.word_cleanup || {};
         const wordCleanupEnabled = document.getElementById('wordCleanupEnabled');
@@ -1884,6 +1931,18 @@
     populateSizeSelect('authorSizeSel','authorSize');
     populateSizeSelect('bodySizeSel','bodySize');
     populateSizeSelect('footerSizeSel','footerSize');
+    populateSizeSelect('tocSizeSel','tocSize');
+    function updateTocStyleModeUI() {
+      const modeEl = document.getElementById('tocStyleMode');
+      const custom = document.getElementById('tocStyleCustomControls');
+      if (!modeEl || !custom) return;
+      custom.style.display = modeEl.value === 'custom' ? 'inline-flex' : 'none';
+    }
+    const tocStyleModeEl = document.getElementById('tocStyleMode');
+    if (tocStyleModeEl) {
+      tocStyleModeEl.addEventListener('change', updateTocStyleModeUI);
+      updateTocStyleModeUI();
+    }
     // Cover role toggles (still using checkboxes)
     const toggleTitle = () => setRoleEnabled('title', $("ovTitle").checked);
     const toggleSubtitle = () => setRoleEnabled('subtitle', $("ovSubtitle").checked);
@@ -2109,6 +2168,10 @@
         mode,
         config_path: configPath,
       };
+      const styles = collectStyles();
+      if (Object.keys(styles).length) {
+        payload.styles = styles;
+      }
 
       // Add batch support (same as Apply button)
       if (currentBatch && Array.isArray(currentBatch.files) && currentBatch.files.length) {

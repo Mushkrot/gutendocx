@@ -1,6 +1,6 @@
 # GutenDocx Session Handoff
 
-Last updated: 2026-06-12 UTC
+Last updated: 2026-06-13 UTC
 
 ## Start Here
 
@@ -33,6 +33,26 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Diagnostic audit events are written to `output/audit_events.jsonl`. They should capture what the user clicked/tried, selected options, uploaded file metadata, endpoint timings, outputs, and errors without storing document contents.
 
 ## Recent Audit
+
+2026-06-13 table/hyperlink/TOC style repair:
+
+- Client examples:
+  - `pg61492.docx`: 4 tables, 173 table-cell paragraphs, hyperlinks, and existing TOC in `w:sdt/w:sdtContent`;
+  - `pg61506.docx`: hyperlinks and existing TOC in `w:sdt/w:sdtContent`.
+- Implemented:
+  - body font-level overrides now reach table-cell text and visible `w:hyperlink` runs;
+  - TOC style UI now supports `Same as Body`, `Same as Heading`, and `Custom`;
+  - `style_overrides.TOC` drives pre-LibreOffice TOC styles and post-LibreOffice TOC result-run repair;
+  - TOC detection/removal now sees nested `sdtContent` TOC blocks.
+- Safety/QA:
+  - safety commit before this repair: `9aae156`, excluding runtime `config.yaml`;
+  - baseline on the attached files with target Body `Aptos 10` and TOC `Georgia 9`: `pg61492` table `164/164` bad, hyperlink `41/41` bad, TOC `52/52` bad; `pg61506` hyperlink `40/40` bad, TOC `46/46` bad;
+  - after core repair, table/hyperlink bad counts are `0`;
+  - existing-source TOC repair on copied attachments reduces TOC bad counts to `0` and preserves field instructions;
+  - full pytest currently passes with 28 tests, and extracted Web UI JS passes `node --check -`.
+- Caveat:
+  - host-mode LibreOffice in this app uses `--convert-to docx`, so final PDF/ZIP and real TOC index-update acceptance must be verified via the production Docker/UNO path after service restart.
+- `config.yaml` is still runtime/user state and must remain unstaged unless explicitly requested.
 
 2026-06-12 cover/page-number style override regressions:
 
