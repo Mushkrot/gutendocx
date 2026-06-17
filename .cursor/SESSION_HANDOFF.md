@@ -45,6 +45,9 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
   - safe body style and normalized paragraphs set `keep_with_next=False`;
   - headings, detected heading mappings, `Para1`, TOC, field paragraphs, cover/header/footer styles, table geometry, hyperlink relationships, spacing/alignment/indents/numbering are excluded from intentional changes;
   - UI/config exposes `body_style_normalization.enabled` as `Normalize body paragraph styles` under `Whole document -> Text styles -> Body Text`.
+- Client-facing workflow:
+  - no new required client action; normal `Apply Styles` usage stays the same because the setting is enabled by default;
+  - mention the checkbox only as a fallback/off-switch for rare source files where preserving original body paragraph styles is desired.
 - QA:
   - real-file before/after: `pg60112` eligible `keepNext` `1 -> 0`; `pg60115` eligible `keepNext` `758 -> 0`;
   - heading counts preserved (`pg60112` `Heading 2: 6`, `pg60115` `Heading 2: 11`);

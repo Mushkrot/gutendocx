@@ -22,6 +22,9 @@ Current iteration:
   - the safe body style and normalized paragraphs get `keep_with_next=False`;
   - headings, detected heading mappings, `Para1`, TOC, field paragraphs, cover/header/footer styles, table geometry, hyperlink relationships, spacing/alignment/indents/numbering are not intentionally changed.
 - Added `body_style_normalization.enabled` with a Web UI toggle under `Whole document -> Text styles -> Body Text` (`Normalize body paragraph styles`) so the operator can disable the repair for a pathological source file.
+- Client-facing workflow note:
+  - the usual `Apply Styles` workflow is unchanged; the normalization is enabled by default;
+  - the new checkbox is mainly a safety off-switch if a rare source file should keep its original body paragraph styles.
 - QA:
   - baseline -> after on real files: `pg60112` eligible `keepNext` `1 -> 0`; `pg60115` eligible `keepNext` `758 -> 0`;
   - heading counts stayed stable (`pg60112` `Heading 2: 6`, `pg60115` `Heading 2: 11`);
