@@ -1,6 +1,6 @@
 # GutenDocx Session Handoff
 
-Last updated: 2026-06-13 UTC
+Last updated: 2026-06-17 UTC
 
 ## Start Here
 
@@ -33,6 +33,31 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Diagnostic audit events are written to `output/audit_events.jsonl`. They should capture what the user clicked/tried, selected options, uploaded file metadata, endpoint timings, outputs, and errors without storing document contents.
 
 ## Recent Audit
+
+2026-06-17 safe body paragraph style normalization:
+
+- Client examples:
+  - `pg60115.docx`: source `Normal` has style-level `keepNext=True`; baseline showed 758 eligible body paragraphs effectively inheriting `keep with next`;
+  - `pg60112.docx`: body text mostly uses source `Para 01` / `Para 02` / `Para 14`; baseline showed one eligible body paragraph effectively inheriting `keep with next`.
+- Implemented:
+  - ordinary post-cover body paragraphs are moved to a safe body style (`GD Body` when configured Body is `Normal`/`Обычный`);
+  - global Word `Normal` is not modified;
+  - safe body style and normalized paragraphs set `keep_with_next=False`;
+  - headings, detected heading mappings, `Para1`, TOC, field paragraphs, cover/header/footer styles, table geometry, hyperlink relationships, spacing/alignment/indents/numbering are excluded from intentional changes;
+  - UI/config exposes `body_style_normalization.enabled` as `Normalize body paragraph styles` under `Whole document -> Text styles -> Body Text`.
+- QA:
+  - real-file before/after: `pg60112` eligible `keepNext` `1 -> 0`; `pg60115` eligible `keepNext` `758 -> 0`;
+  - heading counts preserved (`pg60112` `Heading 2: 6`, `pg60115` `Heading 2: 11`);
+  - `Para1` still applies for manual-line-break paragraphs; Word displays style id `Para1` as `Para 1`;
+  - previous regression samples stayed green: `pg61492` table bad `0/164`, non-TOC hyperlink bad `0/41`; `pg61506` non-TOC hyperlink bad `0/40`;
+  - Docker/LibreOffice smoke created DOCX/PDF for both new files and post-LO eligible `keepNext` stayed `0`.
+- Verification:
+  - rollback baseline before work: `c1de9cc9e75a72911ee52f64a6f105a7755b4d34`;
+  - py_compile for changed Python files passed;
+  - full pytest currently passes with 36 tests;
+  - extracted Web UI JS passes `node --check -`;
+  - `git diff --check` passes.
+- `config.yaml` remains runtime/user state and must remain unstaged unless explicitly requested.
 
 2026-06-13 table/hyperlink/TOC style repair:
 

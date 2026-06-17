@@ -390,6 +390,9 @@
             <summary style="cursor:pointer; font-weight:600;">Body Text <span id="bodySummaryInfo" class="hint" style="margin-left:8px; font-weight:normal;"></span></summary>
             <div style="margin-top:12px; padding:8px; background:#f8fafc; border-radius:4px;">
               <div class="inline">
+                <label><input id="bodyStyleNormalizationEnabled" type="checkbox" checked /> Normalize body paragraph styles</label>
+              </div>
+              <div class="inline">
                 <label>Family</label>
                 <input id="bodyFamily" class="w-280" type="text" placeholder="Times New Roman" />
                 <select id="bodyFontSel" class="w-280"></select>
@@ -757,6 +760,10 @@
       styles.word_cleanup = {
         enabled: !!(wordCleanupEnabled && wordCleanupEnabled.checked),
         patterns_text: wordCleanupPatterns && wordCleanupPatterns.value ? wordCleanupPatterns.value : ''
+      };
+      const bodyStyleNormalizationEnabled = document.getElementById('bodyStyleNormalizationEnabled');
+      styles.body_style_normalization = {
+        enabled: !(bodyStyleNormalizationEnabled && !bodyStyleNormalizationEnabled.checked)
       };
 
       return styles;
@@ -1782,6 +1789,12 @@
           }
         }
         updateWordCleanupUI();
+
+        const bodyStyleNormalization = cfg.body_style_normalization || {};
+        const bodyStyleNormalizationEnabled = document.getElementById('bodyStyleNormalizationEnabled');
+        if (bodyStyleNormalizationEnabled) {
+          bodyStyleNormalizationEnabled.checked = bodyStyleNormalization.enabled !== false;
+        }
         
       } catch (e) {
         console.warn('Failed to load config defaults:', e);

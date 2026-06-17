@@ -118,6 +118,9 @@ word_cleanup:
   patterns: []
   replacement: "^p"
 
+body_style_normalization:
+  enabled: true
+
 output:
   dir: "output"
   versioning: false

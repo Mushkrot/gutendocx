@@ -645,6 +645,142 @@ def _apply_body_style_overrides(doc: Document, config: Dict[str, Any], body_star
     }
 
 
+def _paragraph_has_field_code(p) -> bool:
+    try:
+        return bool(p._p.xpath(".//w:fldChar|.//w:instrText"))
+    except Exception:
+        return False
+
+
+def _safe_body_style_name(config: Dict[str, Any]) -> str:
+    roles_cfg = (config or {}).get("roles", {}) or {}
+    configured = str(roles_cfg.get("Body") or "").strip()
+    if configured and configured.lower() not in {"normal", "обычный"}:
+        return configured
+    return "GD Body"
+
+
+def _ensure_safe_body_style(doc: Document, config: Dict[str, Any]):
+    style_name = _safe_body_style_name(config)
+    try:
+        style = doc.styles[style_name]
+    except KeyError:
+        style = doc.styles.add_style(style_name, WD_STYLE_TYPE.PARAGRAPH)
+        try:
+            style.base_style = doc.styles["Normal"]
+        except Exception:
+            pass
+
+    try:
+        style.paragraph_format.keep_with_next = False
+    except Exception:
+        pass
+    return style
+
+
+def _apply_body_style_normalization(doc: Document, config: Dict[str, Any], body_start: int) -> Dict[str, Any]:
+    """Move ordinary body paragraphs onto a safe body style.
+
+    This intentionally does not modify Word's global Normal style. Some source
+    documents carry pagination flags like keep-with-next on Normal itself, and
+    changing Normal can leak into cover text, page numbers, and TOC styles.
+    """
+    norm_cfg = (config or {}).get("body_style_normalization", {}) or {}
+    if norm_cfg.get("enabled") is False:
+        return {
+            "applied": False,
+            "enabled": False,
+            "style": None,
+            "paragraphs_normalized": 0,
+            "skip_reasons": {},
+        }
+
+    protected_names = {
+        "Title",
+        "Subtitle",
+        "Author",
+        "Cover Title",
+        "Cover Subtitle",
+        "Cover Author",
+        "Header",
+        "Footer",
+    }
+    detected_mapping = (config or {}).get("detected_style_mapping", {}) or {}
+    detected_heading_names = {
+        str(v)
+        for k, v in detected_mapping.items()
+        if str(k) in ("Headings", "Heading1", "Heading2", "Heading3", "Heading4") and v
+    }
+
+    try:
+        safe_style = _ensure_safe_body_style(doc, config)
+    except Exception:
+        return {
+            "applied": False,
+            "enabled": True,
+            "style": _safe_body_style_name(config),
+            "paragraphs_normalized": 0,
+            "skip_reasons": {},
+            "reason": "style_unavailable",
+        }
+
+    safe_style_name = _style_name(safe_style) or _safe_body_style_name(config)
+    paragraphs_normalized = 0
+    keep_next_cleared = 0
+    skip_reasons: Dict[str, int] = {}
+
+    def skip(reason: str) -> None:
+        skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+
+    for idx, p in enumerate(doc.paragraphs):
+        if idx < body_start:
+            skip("before_body")
+            continue
+
+        style = getattr(p, "style", None)
+        name = _style_name(style)
+        lname = name.lower() if name else ""
+        if name in protected_names:
+            skip("protected")
+            continue
+        if name == "Para1":
+            skip("para1")
+            continue
+        if name.startswith("Heading ") or name.startswith("Heading") or name in detected_heading_names:
+            skip("heading")
+            continue
+        if lname.startswith("toc"):
+            skip("toc")
+            continue
+        if _paragraph_has_field_code(p):
+            skip("field")
+            continue
+
+        try:
+            if _style_name(getattr(p, "style", None)) != safe_style_name:
+                p.style = safe_style
+                paragraphs_normalized += 1
+        except Exception:
+            skip("assign_failed")
+            continue
+
+        try:
+            if p.paragraph_format.keep_with_next is not False:
+                p.paragraph_format.keep_with_next = False
+                keep_next_cleared += 1
+        except Exception:
+            pass
+
+    return {
+        "applied": paragraphs_normalized > 0 or keep_next_cleared > 0,
+        "enabled": True,
+        "style": safe_style_name,
+        "paragraphs_normalized": paragraphs_normalized,
+        "keep_with_next_cleared": keep_next_cleared,
+        "skip_reasons": skip_reasons,
+    }
+
+
 def _paragraph_has_manual_line_break(p) -> bool:
     """Return True when a paragraph contains a manual line break, not a page/column break."""
     try:
@@ -1189,6 +1325,7 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
                 except Exception:
                     pass
 
+    body_style_normalization = _apply_body_style_normalization(doc, config, body_start)
     body_overrides = _apply_body_style_overrides(doc, config, body_start)
     headings_overrides = _apply_headings_style_overrides(doc, config, body_start)
     para1_manual_breaks = _apply_para1_manual_line_break_style(doc, config, body_start)
@@ -1279,6 +1416,7 @@ def apply_whole_document(input_path: str, config: Dict[str, Any]) -> Dict[str, A
             "created_char_styles": sorted(created_char_styles),
             "styles_cleanup": cleanup_stats,
             "body_overrides": body_overrides,
+            "body_style_normalization": body_style_normalization,
             "headings_overrides": headings_overrides,
             "word_cleanup": word_cleanup,
             "para1_manual_breaks": para1_manual_breaks,

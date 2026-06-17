@@ -271,6 +271,9 @@ def _styles_summary(styles: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         val = styles.get(key)
         if isinstance(val, dict):
             out[key] = val
+    bsn = styles.get("body_style_normalization")
+    if isinstance(bsn, dict):
+        out["body_style_normalization"] = {"enabled": bool(bsn.get("enabled"))}
     wc = styles.get("word_cleanup")
     if isinstance(wc, dict):
         patterns_text = wc.get("patterns_text")
@@ -434,6 +437,15 @@ def _merge_ui_word_cleanup(cfg: Dict[str, Any], styles: Optional[Dict[str, Any]]
         "patterns": patterns,
         "replacement": WORD_CLEANUP_REPLACEMENT,
     }
+
+
+def _merge_ui_body_style_normalization(cfg: Dict[str, Any], styles: Optional[Dict[str, Any]]) -> None:
+    if not isinstance(styles, dict):
+        return
+    norm_ov = styles.get("body_style_normalization")
+    if not isinstance(norm_ov, dict):
+        return
+    cfg["body_style_normalization"] = {"enabled": bool(norm_ov.get("enabled"))}
 
 
 def _word_cleanup_result_summary(result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -2653,6 +2665,7 @@ def start_apply_job(req: ApplyRequest, request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="At least one of apply_cover or apply_body must be True")
     try:
         _merge_ui_word_cleanup({}, req.styles)
+        _merge_ui_body_style_normalization({}, req.styles)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     requested_model = req.model
@@ -2863,6 +2876,7 @@ def get_config(config_path: str = None) -> Dict[str, Any]:
             "footer": style_overrides.get("Footer", {}),
             "toc": style_overrides.get("TOC", {}),
             "word_cleanup": cfg.get("word_cleanup", {}),
+            "body_style_normalization": cfg.get("body_style_normalization", {"enabled": True}),
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -3209,6 +3223,7 @@ def toc_apply(req: TocApplyRequest, request: Request) -> Dict[str, Any]:
         cfg = load_config(req.config_path)
         if req.styles and isinstance(req.styles, dict):
             _merge_ui_style_overrides(cfg, req.styles)
+            _merge_ui_body_style_normalization(cfg, req.styles)
             save_config(cfg, req.config_path)
         mode = req.mode or "structured"
 
@@ -3559,6 +3574,7 @@ def whole_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                 cfg["special_overrides"] = so_specials
             _merge_ui_style_overrides(cfg, req.styles)
             _merge_ui_word_cleanup(cfg, req.styles)
+            _merge_ui_body_style_normalization(cfg, req.styles)
         # Persist any changes coming from GUI (Body style, layout flags, etc.).
         save_config(cfg, req.config_path)
 
@@ -3899,6 +3915,7 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                     cfg["style_overrides"] = so
             _merge_ui_style_overrides(cfg, req.styles)
             _merge_ui_word_cleanup(cfg, req.styles)
+            _merge_ui_body_style_normalization(cfg, req.styles)
         
         save_config(cfg, req.config_path)
         

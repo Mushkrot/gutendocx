@@ -8,6 +8,34 @@
 
 ## Current Session - Resume Point
 
+**2026-06-17:** Added safe body paragraph style normalization for bad source styles.
+
+Current iteration:
+
+- Investigated client examples `pg60112.docx` and `pg60115.docx`.
+  - The reported breakage comes from source paragraph styles carrying page-position flags, especially Word `keep with next` / `не отрывать от следующего`.
+  - `pg60115.docx` has `Normal` with style-level `keepNext=True`, affecting 758 eligible body paragraphs.
+  - `pg60112.docx` has one eligible body paragraph with effective `keepNext=True`; most body text is on source `Para 01` / `Para 02` / `Para 14` style variants.
+- Implemented cautious normalization:
+  - ordinary body paragraphs after the cover are assigned to a safe body style (`GD Body` when configured body style is `Normal`/`Обычный`);
+  - the global Word `Normal` style is not modified;
+  - the safe body style and normalized paragraphs get `keep_with_next=False`;
+  - headings, detected heading mappings, `Para1`, TOC, field paragraphs, cover/header/footer styles, table geometry, hyperlink relationships, spacing/alignment/indents/numbering are not intentionally changed.
+- Added `body_style_normalization.enabled` with a Web UI toggle under `Whole document -> Text styles -> Body Text` (`Normalize body paragraph styles`) so the operator can disable the repair for a pathological source file.
+- QA:
+  - baseline -> after on real files: `pg60112` eligible `keepNext` `1 -> 0`; `pg60115` eligible `keepNext` `758 -> 0`;
+  - heading counts stayed stable (`pg60112` `Heading 2: 6`, `pg60115` `Heading 2: 11`);
+  - `Para1` exception still applies, with style id `Para1` displayed by Word as `Para 1` on affected manual-line-break paragraphs;
+  - previous regression samples stayed green: `pg61492` table bad `0/164`, non-TOC hyperlink bad `0/41`; `pg61506` non-TOC hyperlink bad `0/40`;
+  - Docker/LibreOffice smoke produced DOCX/PDF for `pg60112` and `pg60115`, and post-LO eligible `keepNext` remained `0`.
+- Verification:
+  - rollback baseline before this work: `c1de9cc9e75a72911ee52f64a6f105a7755b4d34`;
+  - `./gutenberg/bin/python -m py_compile gutendocx/core/whole.py gutendocx/web/server.py gutendocx/tests/test_body_style_normalization.py` passed;
+  - `./gutenberg/bin/python -m pytest gutendocx/tests -q` passed with 36 tests;
+  - extracted Web UI script passed `node --check -`;
+  - `git diff --check` passed.
+- Runtime `config.yaml` remains user/platform state and must not be staged unless explicitly requested.
+
 **2026-06-13:** Added cautious table, hyperlink, and TOC style repair.
 
 Current iteration:
