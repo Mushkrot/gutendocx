@@ -28,12 +28,16 @@ Current iteration:
   - `Para1` exception still applies, with style id `Para1` displayed by Word as `Para 1` on affected manual-line-break paragraphs;
   - previous regression samples stayed green: `pg61492` table bad `0/164`, non-TOC hyperlink bad `0/41`; `pg61506` non-TOC hyperlink bad `0/40`;
   - Docker/LibreOffice smoke produced DOCX/PDF for `pg60112` and `pg60115`, and post-LO eligible `keepNext` remained `0`.
+- Production endpoint QA after restart:
+  - live `/apply` on `pg60112.docx` returned 200, created DOCX/PDF/ZIP, and final eligible `keepNext` was `0` with `Heading 2: 6` preserved;
+  - live `/apply` on `pg60115.docx` returned 200, created DOCX/PDF/ZIP, and final eligible `keepNext` was `0` with `Heading 2: 11` preserved.
 - Verification:
   - rollback baseline before this work: `c1de9cc9e75a72911ee52f64a6f105a7755b4d34`;
   - `./gutenberg/bin/python -m py_compile gutendocx/core/whole.py gutendocx/web/server.py gutendocx/tests/test_body_style_normalization.py` passed;
   - `./gutenberg/bin/python -m pytest gutendocx/tests -q` passed with 36 tests;
   - extracted Web UI script passed `node --check -`;
   - `git diff --check` passed.
+- Production restart verification passed: `gutendocx`, `cloudflared`, `server-firewall`, `tailscaled`, and `ssh` active; bind stayed `127.0.0.1:8000`; local `/health` OK; public URL still redirects to Cloudflare Access.
 - Runtime `config.yaml` remains user/platform state and must not be staged unless explicitly requested.
 
 **2026-06-13:** Added cautious table, hyperlink, and TOC style repair.

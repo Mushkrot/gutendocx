@@ -51,6 +51,10 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
   - `Para1` still applies for manual-line-break paragraphs; Word displays style id `Para1` as `Para 1`;
   - previous regression samples stayed green: `pg61492` table bad `0/164`, non-TOC hyperlink bad `0/41`; `pg61506` non-TOC hyperlink bad `0/40`;
   - Docker/LibreOffice smoke created DOCX/PDF for both new files and post-LO eligible `keepNext` stayed `0`.
+- Production endpoint QA after restart:
+  - live `/apply` on `pg60112.docx` returned 200, created DOCX/PDF/ZIP, and final eligible `keepNext` was `0` with `Heading 2: 6` preserved;
+  - live `/apply` on `pg60115.docx` returned 200, created DOCX/PDF/ZIP, and final eligible `keepNext` was `0` with `Heading 2: 11` preserved;
+  - standard smoke passed: services active, bind `127.0.0.1:8000`, local `/health` OK, public Cloudflare Access redirect preserved.
 - Verification:
   - rollback baseline before work: `c1de9cc9e75a72911ee52f64a6f105a7755b4d34`;
   - py_compile for changed Python files passed;
