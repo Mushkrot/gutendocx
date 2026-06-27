@@ -56,7 +56,8 @@ def _compute_body_start_index(doc: Document) -> int:
       - Page 3+: Body text (starts here)
     
     We need to find TWO page/section breaks. The body starts after the second break.
-    If only one break is found, body starts after that break.
+    If only one break is found, body starts after that break unless that
+    break is a trailing final-document marker with no following body content.
     If no break is found, the whole document is treated as body (index 0).
     """
     break_indices: list[int] = []
@@ -74,11 +75,32 @@ def _compute_body_start_index(doc: Document) -> int:
         body_start = break_indices[1] + 1
         return min(body_start, len(doc.paragraphs))
     elif len(break_indices) == 1:
+        if break_indices[0] == len(doc.paragraphs) - 1:
+            return 0
         # Only one break found - body starts after it
         body_start = break_indices[0] + 1
         return min(body_start, len(doc.paragraphs))
     
     return 0
+
+
+def _uses_single_trailing_break_as_body_boundary(doc: Document, body_start: int) -> bool:
+    """Return True when body starts at 0 only because one final explicit break was ignored."""
+    if body_start != 0:
+        return False
+
+    paragraphs = list(doc.paragraphs)
+    if not paragraphs:
+        return False
+
+    break_indices: list[int] = []
+    for idx, p in enumerate(paragraphs):
+        if _has_explicit_page_break(p):
+            break_indices.append(idx)
+            if len(break_indices) > 1:
+                return False
+
+    return break_indices == [len(paragraphs) - 1]
 
 
 def _collect_special_flags(run) -> Dict[str, bool]:
@@ -514,6 +536,12 @@ def _apply_body_style_overrides(doc: Document, config: Dict[str, Any], body_star
 
     changes: Dict[str, Any] = {}
     paragraphs_modified = 0
+    skip_line_spacing_for_trailing_break = (
+        isinstance(line_spacing, (int, float))
+        and line_spacing > 0
+        and _uses_single_trailing_break_as_body_boundary(doc, body_start)
+    )
+    line_spacing_skipped = 0
 
     # Compute alignment value once
     align_val = None
@@ -602,13 +630,16 @@ def _apply_body_style_overrides(doc: Document, config: Dict[str, Any], body_star
                 except Exception:
                     pass
             if isinstance(line_spacing, (int, float)) and line_spacing > 0:
-                try:
-                    pf.line_spacing = float(line_spacing)
-                    if "line_spacing" not in changes:
-                        changes["line_spacing"] = float(line_spacing)
-                    modified = True
-                except Exception:
-                    pass
+                if skip_line_spacing_for_trailing_break:
+                    line_spacing_skipped += 1
+                else:
+                    try:
+                        pf.line_spacing = float(line_spacing)
+                        if "line_spacing" not in changes:
+                            changes["line_spacing"] = float(line_spacing)
+                        modified = True
+                    except Exception:
+                        pass
             if isinstance(spacing_before_pt, (int, float)) and spacing_before_pt >= 0:
                 try:
                     pf.space_before = Pt(float(spacing_before_pt))
@@ -641,6 +672,7 @@ def _apply_body_style_overrides(doc: Document, config: Dict[str, Any], body_star
         "applied": bool(changes) or bool(nested_font_result.get("applied")),
         "changes": changes,
         "paragraphs_modified": paragraphs_modified,
+        "line_spacing_skipped_for_trailing_break_boundary": line_spacing_skipped,
         "nested_font_overrides": nested_font_result,
     }
 

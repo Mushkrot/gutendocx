@@ -1,6 +1,6 @@
 # GutenDocx Session Handoff
 
-Last updated: 2026-06-17 UTC
+Last updated: 2026-06-27 UTC
 
 ## Start Here
 
@@ -33,6 +33,30 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Diagnostic audit events are written to `output/audit_events.jsonl`. They should capture what the user clicked/tried, selected options, uploaded file metadata, endpoint timings, outputs, and errors without storing document contents.
 
 ## Recent Audit
+
+2026-06-27 `pg1868.docx` single trailing-break body boundary:
+
+- Client example:
+  - `pg1868.docx` has one explicit page/section break in the final paragraph.
+  - Before this fix, `_compute_body_start_index()` returned the end of the document, so whole-document body analysis saw zero body paragraphs and no body styles.
+- Implemented:
+  - a lone final explicit break is treated as trailing noise and no longer becomes the body boundary;
+  - one non-final break and normal two-break cover/blank/body documents keep their previous body-start behavior;
+  - TOC, heading, detected-heading, field, protected-style, and `Para1` exclusion logic was not loosened.
+- Page-count guard:
+  - real-file PDF QA showed `style_overrides.Body.line_spacing: 1.08` became active after the boundary fix and increased `pg1868` from 64 to 66 pages;
+  - direct `Body.line_spacing` is now skipped only when body starts at `0` because one final explicit break was ignored;
+  - other Body overrides still apply, including font, size, bold/italic, and justify alignment.
+- QA:
+  - `pg1868` analyze: `body_start_index=0`, `528` body paragraphs;
+  - local apply: `Para1` on `26` manual-line-break paragraphs;
+  - TOC SDT field/instruction structure preserved;
+  - LibreOffice page count stayed `64 -> 64`;
+  - `pg60112`/`pg60115` keepNext regressions still clear to `0` with heading counts preserved;
+  - `pg61492`/`pg61506` structural TOC/table/hyperlink checks remain present;
+  - full pytest passes with `42` tests and `git diff --check` passes.
+- Production was not touched: no restart, live `/apply`, localhost HTTP check, public URL check, Cloudflare change, or systemd action.
+- `config.yaml` remains runtime/user state and must remain unstaged unless explicitly requested.
 
 2026-06-17 safe body paragraph style normalization:
 

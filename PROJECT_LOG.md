@@ -8,6 +8,37 @@
 
 ## Current Session - Resume Point
 
+**2026-06-27:** Fixed `pg1868.docx` single trailing-break body boundary.
+
+Current iteration:
+
+- Investigated the client "stubborn file" `pg1868.docx`.
+  - The file has one explicit page/section break at the final paragraph.
+  - Before the fix, `_compute_body_start_index()` treated that final marker as a cover/body boundary and returned the end of the document, so body analysis showed zero body paragraphs and no body styles.
+  - Treating that lone final break as trailing noise makes the body visible from paragraph `0`, which allows body style detection and `Para1` for manual-line-break paragraphs.
+- Implemented cautious recovery:
+  - `_compute_body_start_index()` now ignores a single final explicit break as the body boundary;
+  - one-break documents with content after the break still start body after that break;
+  - two-break cover/blank/body documents still start body after the second break;
+  - TOC, heading, detected heading, field, protected-style, and `Para1` exclusion logic was not loosened.
+- Page-count guard:
+  - real-file QA showed that the boundary fix made existing `style_overrides.Body.line_spacing: 1.08` effective on `pg1868`, increasing LibreOffice output from `64` to `66` pages;
+  - the fix therefore skips only direct `Body.line_spacing` when body starts at `0` specifically because one final explicit break was ignored;
+  - other Body overrides such as font, size, bold/italic, and justify alignment remain active.
+- QA:
+  - `pg1868` analyze now reports `body_start_index=0` and `528` body paragraphs;
+  - local apply produced `Para1` on `26` manual-line-break paragraphs;
+  - existing TOC SDT stayed present with field/instruction structure preserved;
+  - local LibreOffice PDF page count stayed `64 -> 64` after the line-spacing guard;
+  - real regression checks kept `pg60112` and `pg60115` eligible `keepNext` at `0` after processing and preserved expected heading counts;
+  - `pg61492`/`pg61506` table/hyperlink/TOC structural checks remained present.
+- Verification:
+  - `./gutenberg/bin/python -m py_compile gutendocx/core/whole.py` passed;
+  - `./gutenberg/bin/python -m pytest gutendocx/tests -q` passed with `42` tests;
+  - `git diff --check` passed.
+- No production service restart, live `/apply`, localhost HTTP check, public URL check, Cloudflare change, or systemd action was performed.
+- Runtime `config.yaml` remains user/platform state and was not intentionally edited or staged.
+
 **2026-06-17:** Added safe body paragraph style normalization for bad source styles.
 
 Current iteration:
