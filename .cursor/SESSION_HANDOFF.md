@@ -55,7 +55,12 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
   - `pg60112`/`pg60115` keepNext regressions still clear to `0` with heading counts preserved;
   - `pg61492`/`pg61506` structural TOC/table/hyperlink checks remain present;
   - full pytest passes with `42` tests and `git diff --check` passes.
-- Production was not touched: no restart, live `/apply`, localhost HTTP check, public URL check, Cloudflare change, or systemd action.
+- Commit/deploy:
+  - commit `20e623d` (`Fix trailing final break body detection`) was pushed to `origin/exp/libreoffice-toc`;
+  - production was restarted with `systemctl restart gutendocx`;
+  - post-deploy smoke passed: app and infrastructure services active, port `8000` bound to `127.0.0.1`, local `/health` OK, public URL redirects to Cloudflare Access;
+  - live `/apply` on a `/tmp` copy of `pg1868.docx` returned 200, produced DOCX/PDF/ZIP, reported `body_start_index=0`, skipped Body line spacing for `503` recovered-body paragraphs, applied `Para1` before LibreOffice/TOC round-trip, and final PDF page count was `64`;
+  - final DOCX structural check found real manual-line-break body paragraphs are `Para1`; only cover title/subtitle and the final service break paragraph were non-`Para1`.
 - `config.yaml` remains runtime/user state and must remain unstaged unless explicitly requested.
 
 2026-06-17 safe body paragraph style normalization:

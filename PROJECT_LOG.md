@@ -32,11 +32,15 @@ Current iteration:
   - local LibreOffice PDF page count stayed `64 -> 64` after the line-spacing guard;
   - real regression checks kept `pg60112` and `pg60115` eligible `keepNext` at `0` after processing and preserved expected heading counts;
   - `pg61492`/`pg61506` table/hyperlink/TOC structural checks remained present.
-- Verification:
+- Verification and deploy:
   - `./gutenberg/bin/python -m py_compile gutendocx/core/whole.py` passed;
   - `./gutenberg/bin/python -m pytest gutendocx/tests -q` passed with `42` tests;
   - `git diff --check` passed.
-- No production service restart, live `/apply`, localhost HTTP check, public URL check, Cloudflare change, or systemd action was performed.
+- Commit `20e623d` (`Fix trailing final break body detection`) was pushed to `origin/exp/libreoffice-toc`.
+- Production deploy was performed with `systemctl restart gutendocx`.
+- Post-deploy smoke passed: `gutendocx`, `cloudflared`, `server-firewall`, `tailscaled`, and `ssh` active; port `8000` stayed bound to `127.0.0.1`; local `/health` returned OK; public URL redirected to Cloudflare Access.
+- Live `/apply` on a `/tmp` copy of `pg1868.docx` returned 200, created DOCX/PDF/ZIP, reported `body_start_index=0`, skipped direct Body line spacing for `503` recovered-body paragraphs, applied `Para1` to `26` paragraphs before LibreOffice/TOC round-trip, and final PDF page count was `64`.
+- Final DOCX structural check showed real manual-line-break body paragraphs are `Para1`; only cover title/subtitle and the final service break paragraph were non-`Para1`.
 - Runtime `config.yaml` remains user/platform state and was not intentionally edited or staged.
 
 **2026-06-17:** Added safe body paragraph style normalization for bad source styles.
