@@ -8,6 +8,35 @@
 
 ## Current Session - Resume Point
 
+**2026-07-08:** Fixed partial Body UI payload dropping the saved body size.
+
+Current iteration:
+
+- Investigated the client's 2026-07-01 follow-up after the `pg1868` repair.
+  - July 1 audit/job records showed the first affected batch sent `styles.body` with only `align: justify`; `size_pt: 12` was not in the payload, so body text could not change from 18pt to 12pt.
+  - Later successful runs changed multiple settings at once: `Body.size_pt=12`, cleanup pattern `^p^l`, and `Normalize body paragraph styles` disabled.
+  - A local matrix on a copy of `pg2095.docx` showed Normalize ON still applies `size_pt: 12` when that value is actually present, so Normalize was not treated as the root cause.
+- Implemented a narrow server-side merge fix:
+  - when the UI submits a partial Body override without `size_pt`, `_merge_ui_style_overrides()` preserves the currently saved Body `size_pt`;
+  - this prevents the common 18pt -> 12pt body pass from being silently lost when the user changes only another Body control such as alignment;
+  - unrelated Body defaults such as line spacing are not pulled into the partial payload, to avoid page-count side effects;
+  - TOC protection, `Para1`, body-style normalization behavior, and trailing-break body-boundary logic were not changed.
+- QA:
+  - focused merge and `/whole/apply` endpoint tests added in `gutendocx/tests/test_ui_style_overrides.py`;
+  - real-file sanity on a `/tmp` copy of the July 1 second-pass `pg2095.docx` with old-style payload `{"body": {"align": "justify"}}` now yields `body_changes {'size_pt': 12.0, 'alignment': 'justify'}`;
+  - `./gutenberg/bin/python -m pytest gutendocx/tests -q` passed with `45` tests;
+  - `./gutenberg/bin/python -m py_compile gutendocx/web/server.py` passed;
+  - extracted Web UI script passed `node --check -`;
+  - `git diff --check` passed.
+- Production deploy:
+  - no active queued/running jobs were found before restart;
+  - `gutendocx.service` was restarted on 2026-07-08 and is running as PID `2792680`;
+  - `gutendocx`, `cloudflared`, `server-firewall`, `tailscaled`, and `ssh` are active;
+  - port `8000` stayed bound to `127.0.0.1`;
+  - local `/health` returned OK and the public URL returned a Cloudflare Access redirect;
+  - live localhost `/whole/apply` against a synthetic `/tmp` DOCX and temp config returned 200 with `body_changes {'size_pt': 12.0, 'alignment': 'justify'}` for old-style payload `{"body": {"align": "justify"}}`.
+- Runtime `config.yaml` remains user/platform state and was not intentionally edited or staged.
+
 **2026-06-27:** Fixed `pg1868.docx` single trailing-break body boundary.
 
 Current iteration:

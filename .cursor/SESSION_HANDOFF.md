@@ -1,6 +1,6 @@
 # GutenDocx Session Handoff
 
-Last updated: 2026-06-27 UTC
+Last updated: 2026-07-08 UTC
 
 ## Start Here
 
@@ -33,6 +33,31 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Diagnostic audit events are written to `output/audit_events.jsonl`. They should capture what the user clicked/tried, selected options, uploaded file metadata, endpoint timings, outputs, and errors without storing document contents.
 
 ## Recent Audit
+
+2026-07-08 partial Body payload / July 1 client follow-up:
+
+- Client report:
+  - after the `pg1868` repair, files that stayed at 18pt still stayed at 18pt during a second pass;
+  - TOC and the first page changed on the first pass;
+  - the client suspected `Normalize body paragraph styles` because disabling it coincided with a later 18pt -> 12pt result.
+- Log analysis:
+  - the first July 1 batch sent `styles.body` with only `align: justify`; no `size_pt: 12` was present, so the backend only changed alignment;
+  - the later successful run sent `Body.size_pt=12` and cleanup pattern `^p^l`, while also disabling Normalize;
+  - a local matrix on a copy of `pg2095.docx` showed Normalize ON still applies `size_pt: 12` when the size is present, so Normalize was not identified as the root cause.
+- Implemented:
+  - `_merge_ui_style_overrides()` now preserves the saved Body `size_pt` when the UI sends a partial Body override without size;
+  - the preservation is intentionally limited to size, so saved line spacing and other unrelated Body defaults are not pulled into partial payloads;
+  - TOC, `Para1`, body-style normalization internals, and trailing-break body-boundary code were not changed.
+- QA:
+  - added helper-level and `/whole/apply` endpoint coverage in `gutendocx/tests/test_ui_style_overrides.py`;
+  - old-style payload `{"body": {"align": "justify"}}` against a `/tmp` copy of the July 1 second-pass `pg2095.docx` now produces `body_changes {'size_pt': 12.0, 'alignment': 'justify'}`;
+  - full pytest passes with 45 tests, server py_compile passes, extracted UI JS syntax passes, and `git diff --check` passes.
+- Deploy:
+  - no active queued/running jobs were found before restart;
+  - `gutendocx.service` was restarted on 2026-07-08 and is running as PID `2792680`;
+  - infrastructure services are active, port `8000` is still bound to `127.0.0.1`, local `/health` is OK, and the public URL redirects to Cloudflare Access;
+  - live localhost `/whole/apply` against a synthetic `/tmp` DOCX and temp config returned 200 with `body_changes {'size_pt': 12.0, 'alignment': 'justify'}` for old-style payload `{"body": {"align": "justify"}}`.
+- `config.yaml` is still runtime/user state and must remain unstaged unless explicitly requested.
 
 2026-06-27 `pg1868.docx` single trailing-break body boundary:
 

@@ -326,6 +326,18 @@ def _style_override_from_ui(ov: Dict[str, Any], include_align: bool = True, foot
     return out
 
 
+def _preserve_body_size_for_partial_ui_override(so: Dict[str, Any], new_body: Dict[str, Any]) -> Dict[str, Any]:
+    # Body controls are partial in the UI: a user can change alignment
+    # while leaving the visible saved size field empty. Preserve only
+    # the saved size so the common 18->12 body pass is not lost, without
+    # pulling in unrelated defaults such as line spacing.
+    current_body = so.get("Body")
+    current_size = current_body.get("size_pt") if isinstance(current_body, dict) else None
+    if "size_pt" not in new_body and isinstance(current_size, (int, float)) and current_size > 0:
+        return {"size_pt": float(current_size), **new_body}
+    return new_body
+
+
 def _restyle_final_footer_if_configured(output_path: Optional[str], cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not output_path:
         return None
@@ -362,7 +374,7 @@ def _merge_ui_style_overrides(cfg: Dict[str, Any], styles: Optional[Dict[str, An
     if isinstance(body_ov, dict):
         new_body = _style_override_from_ui(body_ov)
         if new_body:
-            so["Body"] = new_body
+            so["Body"] = _preserve_body_size_for_partial_ui_override(so, new_body)
 
     headings_ov = styles.get("headings")
     if isinstance(headings_ov, dict):
@@ -3471,8 +3483,8 @@ def whole_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
     try:
         cfg = load_config(req.config_path)
         # Centralized overrides for Body style coming from the UI.
-        # Only properties explicitly set in UI are applied - we do NOT merge
-        # with existing config.yaml values to preserve original document formatting.
+        # Only properties explicitly set in UI are applied, except that the
+        # saved Body size is preserved for partial payloads.
         if req.styles and isinstance(req.styles, dict):  # type: ignore[redundant-expr]
             body_ov = req.styles.get("body")
             if isinstance(body_ov, dict):
@@ -3501,7 +3513,7 @@ def whole_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                 spacing_after = body_ov.get("spacing_after_pt")
                 if isinstance(spacing_after, (int, float)) and spacing_after >= 0:
                     new_body["spacing_after_pt"] = float(spacing_after)
-                so["Body"] = new_body
+                so["Body"] = _preserve_body_size_for_partial_ui_override(so, new_body)
                 cfg["style_overrides"] = so
             # Headings (chapter titles) style overrides
             headings_ov = req.styles.get("headings")
@@ -3872,7 +3884,7 @@ def unified_apply(req: ApplyRequest, request: Request) -> Dict[str, Any]:
                 line_spacing = body_ov.get("line_spacing")
                 if isinstance(line_spacing, (int, float)) and line_spacing > 0:
                     new_body["line_spacing"] = float(line_spacing)
-                so["Body"] = new_body
+                so["Body"] = _preserve_body_size_for_partial_ui_override(so, new_body)
                 cfg["style_overrides"] = so
             
             # Headings style overrides
