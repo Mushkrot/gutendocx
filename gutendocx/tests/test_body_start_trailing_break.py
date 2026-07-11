@@ -34,11 +34,34 @@ def test_single_trailing_section_break_is_ignored_as_body_boundary():
     assert _compute_body_start_index(doc) == 0
 
 
+def test_single_trailing_break_before_empty_service_paragraphs_is_ignored():
+    doc = Document()
+    doc.add_paragraph("Body text")
+    trailing = doc.add_paragraph()
+    _add_page_break(trailing)
+    doc.add_paragraph()
+    doc.add_paragraph()
+
+    assert _compute_body_start_index(doc) == 0
+
+
 def test_single_nonfinal_break_still_starts_body_after_break():
     doc = Document()
     cover = doc.add_paragraph("Cover")
     _add_page_break(cover)
     doc.add_paragraph("Body text")
+
+    assert _compute_body_start_index(doc) == 1
+
+
+def test_field_after_break_is_not_treated_as_empty_trailing_content():
+    doc = Document()
+    cover = doc.add_paragraph("Cover")
+    _add_page_break(cover)
+    field_paragraph = doc.add_paragraph()
+    field_run = OxmlElement("w:r")
+    field_run.append(OxmlElement("w:fldChar"))
+    field_paragraph._p.append(field_run)
 
     assert _compute_body_start_index(doc) == 1
 
@@ -87,4 +110,21 @@ def test_single_trailing_break_guard_skips_only_line_spacing_override():
     assert result["changes"] == {"alignment": "justify"}
     assert result["line_spacing_skipped_for_trailing_break_boundary"] == 2
     assert paragraph.paragraph_format.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY
+    assert paragraph.paragraph_format.line_spacing is None
+
+
+def test_trailing_break_guard_allows_empty_service_paragraphs():
+    doc = Document()
+    paragraph = doc.add_paragraph("Body text")
+    trailing = doc.add_paragraph()
+    _add_page_break(trailing)
+    doc.add_paragraph()
+    body_start = _compute_body_start_index(doc)
+    config = {"style_overrides": {"Body": {"line_spacing": 1.08}}}
+
+    result = _apply_body_style_overrides(doc, config, body_start)
+
+    assert body_start == 0
+    assert result["changes"] == {}
+    assert result["line_spacing_skipped_for_trailing_break_boundary"] == 3
     assert paragraph.paragraph_format.line_spacing is None

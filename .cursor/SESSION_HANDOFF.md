@@ -1,6 +1,6 @@
 # GutenDocx Session Handoff
 
-Last updated: 2026-07-08 UTC
+Last updated: 2026-07-11 UTC
 
 ## Start Here
 
@@ -33,6 +33,19 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - Diagnostic audit events are written to `output/audit_events.jsonl`. They should capture what the user clicked/tried, selected options, uploaded file metadata, endpoint timings, outputs, and errors without storing document contents.
 
 ## Recent Audit
+
+2026-07-11 substantive post-cover body boundary:
+
+- The July 9 four-file batch did send `Body.size_pt=12`; Normalize was not the cause.
+- The shared boundary helper assumed the second explicit break ended a blank page, although each file had real post-cover text before it.
+- A narrow cover-anchored fallback now recovers that text only when a recognized cover style and at least 40 visible skipped characters are present. Blank intervals, decorative markers, and files without cover styles keep legacy behavior.
+- Body starts changed from `438/46/145/93` to `8/7/12/9`; PDF body text in the missed sections changed from 18pt to 12pt.
+- Page counts did not increase (`272->234`, `318->305`, `218->197`, `128->100`), and TOC/heading structure remained stable.
+- The `pg1868` guard now also recognizes a single trailing break followed only by empty service paragraphs; structural content after the break prevents that classification. Its line-spacing guard remains narrow.
+- Real `pg60112`, `pg60115`, `pg61492`, and `pg61506` regression samples passed their keepNext/heading/table/hyperlink/TOC metrics.
+- Full pytest passes with `53` tests; py_compile and diff checks pass.
+- Production has not yet been restarted for this change. Next step is scoped commit/push, zero-active-jobs check, restart, and live smoke.
+- Keep runtime `config.yaml`, `.supergoal/`, client files, Uploads, and output out of commits.
 
 2026-07-08 partial Body payload / July 1 client follow-up:
 

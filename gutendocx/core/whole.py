@@ -47,6 +47,65 @@ def _has_explicit_page_break(p) -> bool:
     return False
 
 
+_COVER_PARAGRAPH_STYLE_NAMES = {
+    "Title",
+    "Subtitle",
+    "Author",
+    "Cover Title",
+    "Cover Subtitle",
+    "Cover Author",
+}
+_MIN_RECOVERED_BODY_CHARS = 40
+
+
+def _paragraph_visible_text(p) -> str:
+    try:
+        return "".join(p._element.xpath(".//w:t/text()"))
+    except Exception:
+        try:
+            return str(p.text or "")
+        except Exception:
+            return ""
+
+
+def _paragraph_has_visible_or_structural_content(p) -> bool:
+    if _paragraph_visible_text(p).strip():
+        return True
+    try:
+        return bool(p._element.xpath(".//w:fldChar|.//w:instrText|.//w:drawing|.//w:pict|.//w:object"))
+    except Exception:
+        return False
+
+
+def _recover_cover_anchored_body_start(doc: Document, legacy_body_start: int) -> int:
+    """Recover real post-cover text skipped by the two-break assumption."""
+    paragraphs = list(doc.paragraphs)
+    if legacy_body_start <= 0 or not paragraphs:
+        return legacy_body_start
+
+    cover_indices = [
+        idx
+        for idx, p in enumerate(paragraphs[:legacy_body_start])
+        if _style_name(getattr(p, "style", None)) in _COVER_PARAGRAPH_STYLE_NAMES
+    ]
+    if not cover_indices:
+        return legacy_body_start
+
+    candidate = cover_indices[-1] + 1
+    while candidate < legacy_body_start and not _paragraph_visible_text(paragraphs[candidate]).strip():
+        candidate += 1
+    if candidate >= legacy_body_start:
+        return legacy_body_start
+
+    recovered_chars = sum(
+        len(_paragraph_visible_text(p).strip())
+        for p in paragraphs[candidate:legacy_body_start]
+    )
+    if recovered_chars < _MIN_RECOVERED_BODY_CHARS:
+        return legacy_body_start
+    return candidate
+
+
 def _compute_body_start_index(doc: Document) -> int:
     """Return index of the first body paragraph (after the cover + blank page).
 
@@ -73,13 +132,16 @@ def _compute_body_start_index(doc: Document) -> int:
     if len(break_indices) >= 2:
         # Body starts after the SECOND break
         body_start = break_indices[1] + 1
-        return min(body_start, len(doc.paragraphs))
+        body_start = min(body_start, len(doc.paragraphs))
+        return _recover_cover_anchored_body_start(doc, body_start)
     elif len(break_indices) == 1:
-        if break_indices[0] == len(doc.paragraphs) - 1:
+        trailing_paragraphs = doc.paragraphs[break_indices[0] + 1 :]
+        if not any(_paragraph_has_visible_or_structural_content(p) for p in trailing_paragraphs):
             return 0
         # Only one break found - body starts after it
         body_start = break_indices[0] + 1
-        return min(body_start, len(doc.paragraphs))
+        body_start = min(body_start, len(doc.paragraphs))
+        return _recover_cover_anchored_body_start(doc, body_start)
     
     return 0
 
@@ -100,7 +162,10 @@ def _uses_single_trailing_break_as_body_boundary(doc: Document, body_start: int)
             if len(break_indices) > 1:
                 return False
 
-    return break_indices == [len(paragraphs) - 1]
+    if len(break_indices) != 1:
+        return False
+    trailing_paragraphs = paragraphs[break_indices[0] + 1 :]
+    return not any(_paragraph_has_visible_or_structural_content(p) for p in trailing_paragraphs)
 
 
 def _collect_special_flags(run) -> Dict[str, bool]:

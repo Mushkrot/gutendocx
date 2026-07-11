@@ -8,6 +8,36 @@
 
 ## Current Session - Resume Point
 
+**2026-07-11:** Fixed substantive post-cover text being skipped before the second explicit break.
+
+Current iteration:
+
+- Investigated the client's July 9 `batch_1783604454` with `pg3251`, `pg3435`, `pg3473`, and `pg3543`.
+  - Both attempts supplied `Body.size_pt=12`; Normalize was off once and on once, so the earlier partial Body payload bug was not involved.
+  - `_compute_body_start_index()` assumed the second explicit break ended a blank page, but these files contained a first story, dedication/preface, biography/poems, or long preface before that break.
+  - The legacy body starts were `438`, `46`, `145`, and `93`, excluding `98,684`, `35,800`, `61,110`, and `79,799` visible post-cover characters respectively.
+- Implemented a narrow cover-anchored recovery:
+  - legacy zero/one/two-break logic remains the fallback;
+  - the boundary moves earlier only when a recognized cover style exists and at least 40 visible characters occur before the legacy boundary;
+  - genuine blank intervals, short decorative markers, and documents without recognized cover styles preserve legacy behavior;
+  - TOC, field, heading, detected-heading, protected-style, and `Para1` exclusions were not loosened.
+- Hardened the existing `pg1868` trailing-break guard:
+  - one trailing break followed only by empty service paragraphs is now treated like a final trailing break;
+  - visible text, fields/instructions, drawings, pictures, or objects after the break still make it non-trailing;
+  - the targeted line-spacing page-count guard remains active for recovered trailing-break bodies.
+- Real-file QA on `/tmp` copies:
+  - fixed body starts are `8`, `7`, `12`, and `9`;
+  - first substantive PDF body text changed from 18pt to 12pt in all four files;
+  - page counts only decreased: `272 -> 234`, `318 -> 305`, `218 -> 197`, and `128 -> 100`;
+  - TOC instruction and heading counts stayed stable; existing `Para1` remained and newly eligible manual-break paragraphs became `Para1`.
+- Prior real regressions stayed green:
+  - `pg60112`/`pg60115` eligible keepNext stayed `0`, with Heading 2 counts `6` and `11`;
+  - `pg61492` table bad `0/164`, non-TOC hyperlink bad `0/41`; `pg61506` hyperlink bad `0/40`; TOC visible-run bad counts stayed `0`;
+  - retained `pg1868` copies resolve to body start `0`; the empty-tail variant skipped direct line spacing for `507` paragraphs and rendered `126 -> 121` pages.
+- Verification: focused boundary tests `14 passed`; full suite `53 passed` with four pre-existing FastAPI deprecation warnings; Python compilation and `git diff --check` passed.
+- Production restart has not yet been performed for this change. Commit/push and the no-active-jobs deploy gate are next.
+- Runtime `config.yaml`, client files, outputs, and `.supergoal/` remain outside the technical commit.
+
 **2026-07-08:** Fixed partial Body UI payload dropping the saved body size.
 
 Current iteration:
