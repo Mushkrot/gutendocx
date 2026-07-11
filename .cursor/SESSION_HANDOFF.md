@@ -44,7 +44,8 @@ Do not rely on older Windsurf/Claude-specific files as active memory unless the 
 - The `pg1868` guard now also recognizes a single trailing break followed only by empty service paragraphs; structural content after the break prevents that classification. Its line-spacing guard remains narrow.
 - Real `pg60112`, `pg60115`, `pg61492`, and `pg61506` regression samples passed their keepNext/heading/table/hyperlink/TOC metrics.
 - Full pytest passes with `53` tests; py_compile and diff checks pass.
-- Production has not yet been restarted for this change. Next step is scoped commit/push, zero-active-jobs check, restart, and live smoke.
+- Commit `91b398d` was pushed. After confirming `0` queued/running jobs, production restarted as PID `2220405`; required services are active, bind is still `127.0.0.1:8000`, local health is OK, and the public URL redirects to Cloudflare Access.
+- Live localhost `/whole/apply` on a synthetic cover/body/internal-break DOCX returned `body_start_index=1`, Body `size_pt=12`, and three normalized body paragraphs.
 - Keep runtime `config.yaml`, `.supergoal/`, client files, Uploads, and output out of commits.
 
 2026-07-08 partial Body payload / July 1 client follow-up:

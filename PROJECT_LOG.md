@@ -35,7 +35,12 @@ Current iteration:
   - `pg61492` table bad `0/164`, non-TOC hyperlink bad `0/41`; `pg61506` hyperlink bad `0/40`; TOC visible-run bad counts stayed `0`;
   - retained `pg1868` copies resolve to body start `0`; the empty-tail variant skipped direct line spacing for `507` paragraphs and rendered `126 -> 121` pages.
 - Verification: focused boundary tests `14 passed`; full suite `53 passed` with four pre-existing FastAPI deprecation warnings; Python compilation and `git diff --check` passed.
-- Production restart has not yet been performed for this change. Commit/push and the no-active-jobs deploy gate are next.
+- Production deploy:
+  - commit `91b398d` (`Recover substantive body text before internal breaks`) was pushed to `origin/exp/libreoffice-toc`;
+  - persisted jobs showed `0` queued/running before restart;
+  - `gutendocx.service` restarted on 2026-07-11 as PID `2220405`; all required services stayed active and port `8000` stayed bound to `127.0.0.1`;
+  - local `/health` returned OK and the public URL returned the expected Cloudflare Access redirect;
+  - live localhost `/whole/apply` on a synthetic cover/body/internal-break DOCX returned `body_start_index=1`, applied `size_pt=12` to three body paragraphs, and normalized three paragraphs.
 - Runtime `config.yaml`, client files, outputs, and `.supergoal/` remain outside the technical commit.
 
 **2026-07-08:** Fixed partial Body UI payload dropping the saved body size.
